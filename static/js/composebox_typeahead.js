@@ -13,15 +13,10 @@ var composebox_typeahead = (function () {
 
 var exports = {};
 
-function get_pm_recipients(query_string) {
-    // Assumes email addresses don't have commas or semicolons in them
-    return query_string.split(/\s*[,;]\s*/);
-}
-
 // Returns an array of private message recipients, removing empty elements.
 // For example, "a,,b, " => ["a", "b"]
 exports.get_cleaned_pm_recipients = function (query_string) {
-    var recipients = get_pm_recipients(query_string);
+    var recipients = util.extract_pm_recipients(query_string);
     recipients = _.filter(recipients, function (elem) {
         return elem.match(/\S/);
     });
@@ -55,7 +50,7 @@ exports.topics_seen_for = function (stream) {
 };
 
 function get_last_recipient_in_pm(query_string) {
-    var recipients = get_pm_recipients(query_string);
+    var recipients = util.extract_pm_recipients(query_string);
     return recipients[recipients.length-1];
 }
 
@@ -72,8 +67,9 @@ function query_matches_person(query, person) {
 
 }
 
+// Case-insensitive
 function query_matches_emoji(query, emoji) {
-    return (emoji.emoji_name.indexOf(query.toLowerCase()) !== -1);
+    return (emoji.emoji_name.toLowerCase().indexOf(query.toLowerCase()) !== -1);
 }
 
 // nextFocus is set on a keydown event to indicate where we should focus on keyup.
@@ -179,7 +175,7 @@ function select_on_focus(field_id) {
 }
 
 exports.split_at_cursor = function (query, input) {
-    var cursor = input.caret().start;
+    var cursor = input.caret();
     return [query.slice(0, cursor), query.slice(cursor)];
 };
 
@@ -262,7 +258,7 @@ exports.content_typeahead_selected = function (item) {
     var rest = pieces[1];
 
     if (this.completing === 'emoji') {
-        //leading and trailing spaces are required for emoji, except if it begins a message.
+        // leading and trailing spaces are required for emoji, except if it begins a message.
         if (beginning.lastIndexOf(":") === 0 || beginning.charAt(beginning.lastIndexOf(":") - 1) === " ") {
             beginning = beginning.replace(/:\S+$/, "") + ":" + item.emoji_name + ": ";
         } else {
@@ -271,12 +267,7 @@ exports.content_typeahead_selected = function (item) {
     } else if (this.completing === 'mention') {
         beginning = (beginning.substring(0, beginning.length - this.token.length-1)
                 + '@**' + item.full_name + '** ');
-
-        // We insert a special `all` item to the autocompleter above
-        // Don't consider it a user mention
-        if (item.email !== 'all' && item.email !== "everyone") {
-            $(document).trigger('usermention_completed.zulip', {mentioned: item});
-        }
+        $(document).trigger('usermention_completed.zulip', {mentioned: item});
     }
 
     // Keep the cursor after the newly inserted text, as Bootstrap will call textbox.change() to overwrite the text
@@ -339,7 +330,7 @@ exports.initialize = function () {
         $("#new_message_content").focus();
 
         return channel.post({
-            url: '/json/change_enter_sends',
+            url: '/json/users/me/enter-sends',
             idempotent: true,
             data: {'enter_sends': page_params.enter_sends}
         });
@@ -377,7 +368,7 @@ exports.initialize = function () {
         fixed: true,
         highlighter: composebox_typeahead_highlighter,
         sorter: function (items) {
-            var sorted = typeahead_helper.sorter(this.query, items, function (x){return x;});
+            var sorted = typeahead_helper.sorter(this.query, items, function (x) {return x;});
             if (sorted.length > 0 && sorted.indexOf(this.query) === -1) {
                 sorted.unshift(this.query);
             }

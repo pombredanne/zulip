@@ -1,4 +1,5 @@
-#!/bin/bash -ex
+#!/usr/bin/env bash
+set -ex
 
 cd /home/tabbott/zulip-backups
 log="$(pwd)"/log
@@ -25,6 +26,9 @@ for h in staging.zulip.net prod0.zulip.net; do
     rsync -v zulip@$h:logs/event_log/events.* .
 done
 git add events.*
+commit
+
+rsync -az root@prod0.zulip.net:/srv/www/dist dist/
 commit
 
 cd ../wiki

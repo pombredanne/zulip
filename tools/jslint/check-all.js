@@ -4,10 +4,10 @@
 var globals =
     // Third-party libraries
       ' $ _ jQuery Spinner Handlebars XDate zxcvbn Intl Notification'
-    + ' LazyLoad Dropbox SockJS marked'
+    + ' LazyLoad Dropbox SockJS marked i18n'
 
     // Node-based unit tests
-    + ' module'
+    + ' module require'
 
     // Cocoa<-> Javascript bridge
     + ' bridge'
@@ -22,9 +22,9 @@ var globals =
     + ' csrf_token'
 
     // Modules, defined in their respective files.
-    + ' compose compose_fade rows hotkeys narrow reload search subs'
+    + ' compose compose_fade rows hotkeys narrow reload search subs pointer'
     + ' composebox_typeahead server_events typeahead_helper notifications hashchange'
-    + ' invite ui util activity timerender MessageList MessageListView blueslip unread stream_list'
+    + ' invite ui viewport util activity timerender message_list MessageListView blueslip unread stream_list'
     + ' message_edit tab_bar emoji popovers navigate people settings alert_words_ui message_store'
     + ' avatar feature_flags search_suggestion referral stream_color Dict'
     + ' Filter summary admin stream_data muting WinChan muting_ui Socket channel gear_menu'
@@ -53,15 +53,8 @@ var globals =
     + ' localstorage'
 
     // zulip.js
-    + ' all_msg_list home_msg_list narrowed_msg_list current_msg_list'
-    + ' keep_pointer_in_view unread_messages_read_in_narrow'
-    + ' respond_to_message recenter_view last_viewport_movement_direction'
-    + ' scroll_to_selected get_private_message_recipient'
-    + ' viewport process_loaded_for_unread'
-    + ' have_scrolled_away_from_top'
-    + ' maybe_scroll_to_selected recenter_pointer_on_display suppress_scroll_pointer_update'
-    + ' fast_forward_pointer recent_subjects unread_subjects'
-    + ' furthest_read server_furthest_read'
+    + ' home_msg_list current_msg_list'
+    + ' process_loaded_for_unread'
     ;
 
 

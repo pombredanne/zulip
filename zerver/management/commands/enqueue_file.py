@@ -1,6 +1,9 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+from typing import Any, IO
+
+from argparse import ArgumentParser
 from django.core.management.base import BaseCommand
 from zerver.lib.queue import queue_json_publish
 
@@ -9,6 +12,7 @@ import ujson
 
 
 def error(*args):
+    # type: (*Any) -> None
     raise Exception('We cannot enqueue because settings.USING_RABBITMQ is False.')
 
 class Command(BaseCommand):
@@ -23,17 +27,19 @@ You can use "-" to represent stdin.
 """
 
     def add_arguments(self, parser):
+        # type: (ArgumentParser) -> None
         parser.add_argument('queue_name', metavar='<queue>', type=str,
                             help="name of worker queue to enqueue to")
         parser.add_argument('file_name', metavar='<file>', type=str,
                             help="name of file containing JSON lines")
 
     def handle(self, *args, **options):
+        # type: (*Any, **str) -> None
         queue_name = options['queue_name']
         file_name = options['file_name']
 
         if file_name == '-':
-            f = sys.stdin
+            f = sys.stdin # type: IO[str]
         else:
             f = open(file_name)
 

@@ -2,6 +2,14 @@ var compose = (function () {
 
 var exports = {};
 var is_composing_message = false;
+
+// Track the state of the @all warning. The user must acknowledge that they are spamming the entire stream
+// before the warning will go away. If they try to send before explicitly dismissing the warning, they will
+// get an error message too.
+// undefined: no @all/@everyone in message; false: user typed @all/@everyone; true: user clicked YES
+var user_acknowledged_all_everyone;
+var all_everyone_re = /(@\*{2}(all|everyone)\*{2})|(@(all|everyone))/;
+
 var message_snapshot;
 var empty_subject_placeholder = "(no topic)";
 
@@ -85,6 +93,28 @@ function show_box(tabname, focus_area, opts) {
 
 }
 
+function show_all_everyone_warnings() {
+    var current_stream = stream_data.get_sub(compose.stream_name());
+    var stream_count = current_stream.subscribers.num_items();
+
+    var all_everyone_template = templates.render("compose_all_everyone", {count: stream_count});
+    var error_area_all_everyone = $("#compose-all-everyone");
+
+    // only show one error for any number of @all or @everyone mentions
+    if (!error_area_all_everyone.is(':visible')) {
+        error_area_all_everyone.append(all_everyone_template);
+    }
+
+    error_area_all_everyone.show();
+    user_acknowledged_all_everyone = false;
+}
+
+function clear_all_everyone_warnings() {
+    $("#compose-all-everyone").hide();
+    $("#compose-all-everyone").empty();
+    $("#send-status").hide();
+}
+
 function clear_invites() {
     $("#compose_invite_users").hide();
     $("#compose_invite_users").empty();
@@ -93,6 +123,8 @@ function clear_invites() {
 function clear_box() {
     exports.snapshot_message();
     clear_invites();
+    clear_all_everyone_warnings();
+    user_acknowledged_all_everyone = undefined;
     $("#compose").find('input[type=text], textarea').val('');
     autosize_textarea();
     $("#send-status").hide(0);
@@ -298,7 +330,7 @@ function create_message_object() {
 
     if (message.type === "private") {
         // TODO: this should be collapsed with the code in composebox_typeahead.js
-        message.to = compose.recipient().split(/\s*[,;]\s*/);
+        message.to = util.extract_pm_recipients(compose.recipient());
         message.reply_to = compose.recipient();
     } else {
         message.to = compose.stream_name();
@@ -342,6 +374,11 @@ exports.restore_message = function () {
     clear_message_snapshot();
     compose_fade.clear_compose();
     compose.start(snapshot_copy.type, snapshot_copy);
+
+    if (snapshot_copy.content !== undefined &&
+        all_everyone_re.test(snapshot_copy.content)) {
+        show_all_everyone_warnings();
+    }
 };
 
 function compose_error(error_text, bad_input) {
@@ -360,13 +397,17 @@ var send_options;
 
 function send_message_ajax(request, success, error) {
     channel.post({
-        url: '/json/send_message',
+        url: '/json/messages',
         data: request,
         success: success,
         error: function (xhr, error_type) {
             if (error_type !== 'timeout' && reload.is_pending()) {
                 // The error might be due to the server changing
-                reload.initiate({immediate: true, send_after_reload: true});
+                reload.initiate({immediate: true,
+                                 save_pointer: true,
+                                 save_narrow: true,
+                                 save_compose: true,
+                                 send_after_reload: true});
                 return;
             }
 
@@ -557,6 +598,46 @@ function send_message(request) {
     }
 }
 
+exports.respond_to_message = function (opts) {
+    var message, msg_type;
+    // Before initiating a reply to a message, if there's an
+    // in-progress composition, snapshot it.
+    compose.snapshot_message();
+
+    message = current_msg_list.selected_message();
+
+    if (message === undefined) {
+        return;
+    }
+
+    unread.mark_message_as_read(message);
+
+    var stream = '';
+    var subject = '';
+    if (message.type === "stream") {
+        stream = message.stream;
+        subject = message.subject;
+    }
+
+    var pm_recipient = message.reply_to;
+    if (opts.reply_type === "personal" && message.type === "private") {
+        // reply_to for private messages is everyone involved, so for
+        // personals replies we need to set the the private message
+        // recipient to just the sender
+        pm_recipient = message.sender_email;
+    }
+    if (opts.reply_type === 'personal' || message.type === 'private') {
+        msg_type = 'private';
+    } else {
+        msg_type = message.type;
+    }
+    compose.start(msg_type, {'stream': stream, 'subject': subject,
+                             'private_message_recipient': pm_recipient,
+                             'replying_to_message': message,
+                             'trigger': opts.trigger});
+
+};
+
 // This function is for debugging / data collection only.  Arguably it
 // should live in debug.js, but then it wouldn't be able to call
 // send_message() directly below.
@@ -669,7 +750,7 @@ function check_stream_for_send(stream_name, autosubscribe) {
     var result = exports.check_stream_existence(stream_name, autosubscribe);
 
     if (result === "error") {
-        compose_error("Error checking subscription", $("#stream"));
+        compose_error(i18n.t("Error checking subscription"), $("#stream"));
         $("#compose-send-button").removeAttr('disabled');
         $("#sending-indicator").hide();
     }
@@ -680,17 +761,34 @@ function check_stream_for_send(stream_name, autosubscribe) {
 function validate_stream_message() {
     var stream_name = exports.stream_name();
     if (stream_name === "") {
-        compose_error("Please specify a stream", $("#stream"));
+        compose_error(i18n.t("Please specify a stream"), $("#stream"));
         return false;
     }
 
     if (page_params.mandatory_topics) {
         var topic = exports.subject();
         if (topic === "") {
-            compose_error("Please specify a topic", $("#subject"));
+            compose_error(i18n.t("Please specify a topic"), $("#subject"));
             return false;
         }
     }
+
+    // check if @all or @everyone is in the message
+    if (all_everyone_re.test(exports.message_content())) {
+        if (user_acknowledged_all_everyone === undefined ||
+            user_acknowledged_all_everyone === false) {
+            // user has not seen a warning message yet if undefined
+            show_all_everyone_warnings();
+            // user has not acknowledge the warning message yet
+            compose_error(i18n.t("Please remove @all / @everyone or acknowledge that you will be spamming everyone!"));
+            return false;
+        }
+    } else {
+        // the message no longer contains @all or @everyone
+        clear_all_everyone_warnings();
+    }
+    // at this point, the user has either acknowledged the warning or removed @all / @everyone
+    user_acknowledged_all_everyone = undefined;
 
     var response;
 
@@ -719,14 +817,41 @@ function validate_stream_message() {
 
     return true;
 }
-
+// The function checks whether the recipients are users of the realm or cross realm users (bots for now)
 function validate_private_message() {
     if (exports.recipient() === "") {
-        compose_error("Please specify at least one recipient", $("#private_message_recipient"));
+        compose_error(i18n.t("Please specify at least one recipient"), $("#private_message_recipient"));
         return false;
-    }
+    } else {
+        var private_recipients = util.extract_pm_recipients(compose.recipient());
+        var invalid_recipients = [];
+        var context = {};
+        _.each(private_recipients, function (email) {
+            // This case occurs when exports.recipient() ends with ','
+            if (email === "") {
+                return;
+            }
+            if (people.realm_get(email) !== undefined) {
+                return;
+            }
+            if (util.string_in_list_case_insensitive(email, page_params.cross_realm_user_emails)) {
+                return;
+            }
+            invalid_recipients.push(email);
+        });
 
-    return true;
+        if (invalid_recipients.length === 1) {
+            context = {'recipient': invalid_recipients.join()};
+            compose_error(i18n.t("The recipient __recipient__ is not valid ", context), $("#private_message_recipient"));
+            return false;
+        } else if (invalid_recipients.length > 1) {
+            context = {'recipients': invalid_recipients.join()};
+            compose_error(i18n.t("The recipients __recipients__ are not valid ", context), $("#private_message_recipient"));
+            return false;
+        } else {
+            return true;
+        }
+    }
 }
 
 exports.validate = function () {
@@ -734,12 +859,12 @@ exports.validate = function () {
     $("#sending-indicator").show();
 
     if (/^\s*$/.test(exports.message_content())) {
-        compose_error("You have nothing to send!", $("#new_message_content"));
+        compose_error(i18n.t("You have nothing to send!"), $("#new_message_content"));
         return false;
     }
 
     if ($("#zephyr-mirror-error").is(":visible")) {
-        compose_error("You need to be running Zephyr mirroring in order to send messages!");
+        compose_error(i18n.t("You need to be running Zephyr mirroring in order to send messages!"));
         return false;
     }
 
@@ -778,13 +903,20 @@ $(function () {
     // Show a warning if a user @-mentions someone who will not receive this message
     $(document).on('usermention_completed.zulip', function (event, data) {
         // Legacy strangeness: is_composing_message can be false, "stream", or "private"
-        // Disable on MIT since we never have subscriber lists there
-        if (is_composing_message !== "stream" || page_params.domain === 'mit.edu') {
+        // Disable for Zephyr mirroring realms, since we never have subscriber lists there
+        if (is_composing_message !== "stream" || page_params.is_zephyr_mirror_realm) {
             return;
         }
 
         if (data !== undefined && data.mentioned !== undefined) {
             var email = data.mentioned.email;
+
+            // warn if @all or @everyone is mentioned
+            if (data.mentioned.full_name  === 'all' || data.mentioned.full_name === 'everyone') {
+                show_all_everyone_warnings();
+                return; // don't check if @all or @everyone is subscribed to a stream
+            }
+
             if (compose_fade.would_receive_message(email) === false) {
                 var new_row = templates.render("compose-invite-users", {email: email,
                                                                         name: data.mentioned.full_name});
@@ -801,6 +933,16 @@ $(function () {
                 error_area.show();
             }
         }
+
+    });
+
+    $("#compose-all-everyone").on('click', '.compose-all-everyone-confirm', function (event) {
+        event.preventDefault();
+
+        $(event.target).parents('.compose-all-everyone').remove();
+        user_acknowledged_all_everyone = true;
+        clear_all_everyone_warnings();
+        $('#new_message_content').focus().select();
     });
 
     $("#compose_invite_users").on('click', '.compose_invite_link', function (event) {
@@ -950,10 +1092,10 @@ $(function () {
     }
 
     $("#compose").filedrop({
-        url: "json/upload_file",
+        url: "/json/upload_file",
         fallback_id: "file_input",
         paramname: "file",
-        maxfilesize: 25,
+        maxfilesize: page_params.maxfilesize,
         data: {
             // the token isn't automatically included in filedrop's post
             csrfmiddlewaretoken: csrf_token

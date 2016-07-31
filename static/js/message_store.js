@@ -10,9 +10,35 @@ var load_more_enabled = true;
 
 // used for our URL rewriting in insert_new_messages
 var humbug_images_re = new RegExp("https://humbug-user-uploads.s3.amazonaws.com/([^\"]+)", 'g');
+exports.recent_private_messages = [];
 
 exports.get = function get(message_id) {
     return stored_messages[message_id];
+};
+
+exports.get_private_message_recipient = function (message, attr, fallback_attr) {
+    var recipient, i;
+    var other_recipients = _.filter(message.display_recipient,
+                                  function (element) {
+                                      return !util.is_current_user(element.email);
+                                  });
+    if (other_recipients.length === 0) {
+        // private message with oneself
+        return message.display_recipient[0][attr];
+    }
+
+    recipient = other_recipients[0][attr];
+    if (recipient === undefined && fallback_attr !== undefined) {
+        recipient = other_recipients[0][fallback_attr];
+    }
+    for (i = 1; i < other_recipients.length; i++) {
+        var attr_value = other_recipients[i][attr];
+        if (attr_value === undefined && fallback_attr !== undefined) {
+            attr_value = other_recipients[i][fallback_attr];
+        }
+        recipient += ', ' + attr_value;
+    }
+    return recipient;
 };
 
 exports.process_message_for_recent_subjects = function process_message_for_recent_subjects(message, remove_message) {
@@ -21,22 +47,20 @@ exports.process_message_for_recent_subjects = function process_message_for_recen
     var stream = message.stream;
     var canon_subject = stream_data.canonicalized_name(message.subject);
 
-    if (! recent_subjects.has(stream)) {
-        recent_subjects.set(stream, []);
+    if (! stream_data.recent_subjects.has(stream)) {
+        stream_data.recent_subjects.set(stream, []);
     } else {
-        recent_subjects.set(stream,
-                            _.filter(recent_subjects.get(stream), function (item) {
-                                var is_duplicate = (item.canon_subject.toLowerCase() === canon_subject.toLowerCase());
-                                if (is_duplicate) {
-                                    current_timestamp = item.timestamp;
-                                    count = item.count;
-                                }
-
-                                return !is_duplicate;
-                            }));
+        stream_data.recent_subjects.set(stream, _.filter(stream_data.recent_subjects.get(stream), function (item) {
+            var is_duplicate = (item.canon_subject.toLowerCase() === canon_subject.toLowerCase());
+            if (is_duplicate) {
+                current_timestamp = item.timestamp;
+                count = item.count;
+            }
+            return !is_duplicate;
+        }));
     }
 
-    var recents = recent_subjects.get(stream);
+    var recents = stream_data.recent_subjects.get(stream);
 
     if (remove_message !== undefined) {
         count = count - 1;
@@ -55,13 +79,32 @@ exports.process_message_for_recent_subjects = function process_message_for_recen
         return b.timestamp - a.timestamp;
     });
 
-    recent_subjects.set(stream, recents);
+    stream_data.recent_subjects.set(stream, recents);
+};
+
+exports.process_message_for_recent_private_messages = function process_message_for_recent_private_messages(message, remove_message) {
+    var current_timestamp = 0;
+
+    // If this conversation is already tracked, we'll replace with new timestamp,
+    // so remove it from the current list.
+    exports.recent_private_messages = _.filter(exports.recent_private_messages, function (recent_pm) {
+        return recent_pm.reply_to !== message.reply_to;
+    });
+
+    var new_conversation = {reply_to: message.reply_to,
+                            display_reply_to: message.display_reply_to,
+                            timestamp: Math.max(message.timestamp, current_timestamp)};
+
+    exports.recent_private_messages.push(new_conversation);
+    exports.recent_private_messages.sort(function (a, b) {
+        return b.timestamp - a.timestamp;
+    });
 };
 
 function set_topic_edit_properties(message) {
     message.always_visible_topic_edit = false;
     message.on_hover_topic_edit = false;
-    if (feature_flags.disable_message_editing) {
+    if (!page_params.realm_allow_message_editing) {
         return;
     }
 
@@ -88,7 +131,7 @@ function add_message_metadata(message) {
 
     var involved_people;
 
-    message.sent_by_me = (message.sender_email === page_params.email);
+    message.sent_by_me = util.is_current_user(message.sender_email);
 
     message.flags = message.flags || [];
     message.historical = (message.flags !== undefined &&
@@ -117,9 +160,10 @@ function add_message_metadata(message) {
     case 'private':
         message.is_private = true;
         message.reply_to = util.normalize_recipients(
-                get_private_message_recipient(message, 'email'));
-        message.display_reply_to = get_private_message_recipient(message, 'full_name', 'email');
+                exports.get_private_message_recipient(message, 'email'));
+        message.display_reply_to = exports.get_private_message_recipient(message, 'full_name', 'email');
 
+        exports.process_message_for_recent_private_messages(message);
         involved_people = message.display_recipient;
         break;
     }
@@ -321,18 +365,19 @@ exports.update_messages = function update_messages(events) {
     if (topic_edited) {
         if (!changed_narrow) {
             home_msg_list.rerender();
-            if (current_msg_list === narrowed_msg_list) {
-                narrowed_msg_list.rerender();
+            if (current_msg_list === message_list.narrowed) {
+                message_list.narrowed.rerender();
             }
         }
     } else {
         home_msg_list.view.rerender_messages(msgs_to_rerender);
-        if (current_msg_list === narrowed_msg_list) {
-            narrowed_msg_list.view.rerender_messages(msgs_to_rerender);
+        if (current_msg_list === message_list.narrowed) {
+            message_list.narrowed.view.rerender_messages(msgs_to_rerender);
         }
     }
     unread.update_unread_counts();
     stream_list.update_streams_sidebar();
+    stream_list.update_private_messages();
 };
 
 exports.insert_new_messages = function insert_new_messages(messages) {
@@ -341,15 +386,15 @@ exports.insert_new_messages = function insert_new_messages(messages) {
     // You must add add messages to home_msg_list BEFORE
     // calling unread.process_loaded_messages.
     exports.add_messages(messages, home_msg_list, {messages_are_new: true});
-    exports.add_messages(messages, all_msg_list, {messages_are_new: true});
+    exports.add_messages(messages, message_list.all, {messages_are_new: true});
 
     if (narrow.active()) {
         if (narrow.filter().can_apply_locally()) {
-            exports.add_messages(messages, narrowed_msg_list, {messages_are_new: true});
+            exports.add_messages(messages, message_list.narrowed, {messages_are_new: true});
             notifications.possibly_notify_new_messages_outside_viewport(messages);
         } else {
             // if we cannot apply locally, we have to wait for this callback to happen to notify
-            maybe_add_narrowed_messages(messages, narrowed_msg_list, true);
+            maybe_add_narrowed_messages(messages, message_list.narrowed, true);
         }
     } else {
         notifications.possibly_notify_new_messages_outside_viewport(messages);
@@ -366,7 +411,7 @@ exports.insert_new_messages = function insert_new_messages(messages) {
 
         // Iterate backwards to find the last message sent_by_me, stopping at
         // the pointer position.
-        for (i = messages.length-1; i>=0; i--){
+        for (i = messages.length-1; i>=0; i--) {
             var id = messages[i].id;
             if (id <= selected_id) {
                 break;
@@ -383,13 +428,14 @@ exports.insert_new_messages = function insert_new_messages(messages) {
     unread.process_visible();
     notifications.received_messages(messages);
     stream_list.update_streams_sidebar();
+    stream_list.update_private_messages();
 };
 
 function process_result(messages, opts) {
     $('#get_old_messages_error').hide();
 
-    if ((messages.length === 0) && (current_msg_list === narrowed_msg_list) &&
-        narrowed_msg_list.empty()) {
+    if ((messages.length === 0) && (current_msg_list === message_list.narrowed) &&
+        message_list.narrowed.empty()) {
         // Even after trying to load more messages, we have no
         // messages to display in this narrow.
         narrow.show_empty_narrow_message();
@@ -398,11 +444,11 @@ function process_result(messages, opts) {
     messages = _.map(messages, add_message_metadata);
 
     // If we're loading more messages into the home view, save them to
-    // the all_msg_list as well, as the home_msg_list is reconstructed
-    // from all_msg_list.
+    // the message_list.all as well, as the home_msg_list is reconstructed
+    // from message_list.all.
     if (opts.msg_list === home_msg_list) {
         process_loaded_for_unread(messages);
-        exports.add_messages(messages, all_msg_list, {messages_are_new: false});
+        exports.add_messages(messages, message_list.all, {messages_are_new: false});
     }
 
     if (messages.length !== 0 && !opts.cont_will_add_messages) {
@@ -410,6 +456,7 @@ function process_result(messages, opts) {
     }
 
     stream_list.update_streams_sidebar();
+    stream_list.update_private_messages();
 
     if (opts.cont !== undefined) {
         opts.cont(messages);
@@ -465,8 +512,8 @@ exports.load_old_messages = function load_old_messages(opts) {
         data.use_first_unread_anchor = true;
     }
 
-    channel.post({
-        url:      '/json/get_old_messages',
+    channel.get({
+        url:      '/json/messages',
         data:     data,
         idempotent: true,
         success: function (data) {
@@ -499,7 +546,7 @@ exports.load_old_messages = function load_old_messages(opts) {
 
 exports.reset_load_more_status = function reset_load_more_status() {
     load_more_enabled = true;
-    have_scrolled_away_from_top = true;
+    ui.have_scrolled_away_from_top = true;
     ui.hide_loading_more_messages_indicator();
 };
 
@@ -570,7 +617,7 @@ util.execute_early(function () {
         var backfill_batch_size = 1000;
         $(document).idle({'idle': 1000*10,
                           'onIdle': function () {
-                              var first_id = all_msg_list.first().id;
+                              var first_id = message_list.all.first().id;
                               exports.load_old_messages({
                                   anchor: first_id,
                                   num_before: backfill_batch_size,
@@ -594,8 +641,8 @@ util.execute_early(function () {
 
     $(document).on('message_id_changed', function (event) {
         var old_id = event.old_id, new_id = event.new_id;
-        if (furthest_read === old_id) {
-            furthest_read = new_id;
+        if (pointer.furthest_read === old_id) {
+            pointer.furthest_read = new_id;
         }
         if (stored_messages[old_id]) {
             stored_messages[new_id] = stored_messages[old_id];
@@ -608,7 +655,7 @@ util.execute_early(function () {
         // created, but due to the closure, the old list is not garbage collected. This also leads
         // to the old list receiving the change id events, and throwing errors as it does not
         // have the messages that you would expect in its internal data structures.
-        _.each([all_msg_list, home_msg_list, narrowed_msg_list], function (msg_list) {
+        _.each([message_list.all, home_msg_list, message_list.narrowed], function (msg_list) {
             if (msg_list !== undefined) {
                 msg_list.change_message_id(old_id, new_id);
 

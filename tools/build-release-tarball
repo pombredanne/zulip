@@ -1,4 +1,6 @@
-#!/bin/sh -ex
+#!/usr/bin/env bash
+set -e
+set -x
 
 GITID=$(git rev-parse HEAD)
 
@@ -42,15 +44,15 @@ fi
 git checkout-index -f -a --prefix "$TMP_CHECKOUT"
 cd "$TMP_CHECKOUT"
 
-# Use default settings so there is no chance of leaking secrets
-cp zproject/local_settings_template.py zproject/local_settings.py
+# create var/log directory in the new temporary checkout
+mkdir -p "var/log"
 
 # Some settings need to be updated for update-prod-static to work
 #
 # TODO: Would be much better to instead run the below tools with some
 # sort of environment hack to make settings.VOYAGER=True so that we
 # don't need to create this dummy secrets file.
-cat >> zproject/local_settings_template.py <<EOF
+cat >> zproject/prod_settings_template.py <<EOF
 DEBUG = False
 EOF
 cat >> zproject/dev-secrets.conf <<EOF
@@ -72,7 +74,7 @@ set -x
 ./tools/update-prod-static
 echo "$GITID" > build_id
 echo "$version" > version
-mv update-prod-static.log ..
+mv var/log/update-prod-static.log ../
 
 rm -f zproject/dev-secrets.conf
 

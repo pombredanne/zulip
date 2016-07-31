@@ -1,5 +1,8 @@
 from __future__ import absolute_import
+from __future__ import division
 from __future__ import print_function
+
+from typing import Any, Dict
 
 from zerver.lib.statistics import seconds_usage_between
 
@@ -10,6 +13,7 @@ import datetime
 from django.utils.timezone import utc
 
 def analyze_activity(options):
+    # type: (Dict[str, Any]) -> None
     day_start = datetime.datetime.strptime(options["date"], "%Y-%m-%d").replace(tzinfo=utc)
     day_end = day_start + datetime.timedelta(days=options["duration"])
 
@@ -26,7 +30,7 @@ def analyze_activity(options):
             continue
 
         total_duration += duration
-        print("%-*s%s" % (37, user_profile.email, duration, ))
+        print("%-*s%s" % (37, user_profile.email, duration,))
 
     print("\nTotal Duration:                      %s" % (total_duration,))
     print("\nTotal Duration in minutes:           %s" % (total_duration.total_seconds() / 60.,))
@@ -43,7 +47,7 @@ It will correctly not count server-initiated reloads in the activity statistics.
 
 The duration flag can be used to control how many days to show usage duration for
 
-Usage: python2.7 manage.py analyze_user_activity [--realm=zulip.com] [--date=2013-09-10] [--duration=1]
+Usage: python manage.py analyze_user_activity [--realm=zulip.com] [--date=2013-09-10] [--duration=1]
 
 By default, if no date is selected 2013-09-10 is used. If no realm is provided, information
 is shown for all realms"""
@@ -51,8 +55,10 @@ is shown for all realms"""
     option_list = BaseCommand.option_list + (
         make_option('--realm', action='store'),
         make_option('--date', action='store', default="2013-09-06"),
-        make_option('--duration', action='store', default=1, type=int, help="How many days to show usage information for"),
+        make_option('--duration', action='store', default=1, type=int,
+                    help="How many days to show usage information for"),
         )
 
     def handle(self, *args, **options):
+        # type: (*Any, **Any) -> None
         analyze_activity(options)

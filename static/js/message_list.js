@@ -1,5 +1,11 @@
 /*jslint nomen: true */
-function MessageList(table_name, filter, opts) {
+var message_list = (function () {
+
+var exports = {};
+
+exports.narrowed = undefined;
+
+exports.MessageList = function (table_name, filter, opts) {
     _.extend(this, {
         collapse_messages: true,
         muting_enabled: true
@@ -25,11 +31,9 @@ function MessageList(table_name, filter, opts) {
     this.num_appends = 0;
 
     return this;
-}
+};
 
-(function () {
-
-MessageList.prototype = {
+exports.MessageList.prototype = {
     add_messages: function MessageList_add_messages(messages, opts) {
         var self = this;
         var predicate = self.filter.predicate();
@@ -74,14 +78,14 @@ MessageList.prototype = {
             self.append(bottom_messages, opts);
         }
 
-        if ((self === narrowed_msg_list) && !self.empty()) {
+        if ((self === exports.narrowed) && !self.empty()) {
             // If adding some new messages to the message tables caused
             // our current narrow to no longer be empty, hide the empty
             // feed placeholder text.
             narrow.hide_empty_narrow_message();
         }
 
-        if ((self === narrowed_msg_list) && !self.empty() &&
+        if ((self === exports.narrowed) && !self.empty() &&
             (self.selected_id() === -1) && !opts.delay_render) {
             // And also select the newly arrived message.
             self.select_id(self.selected_id(), {then_scroll: true, use_closest: true});
@@ -360,9 +364,7 @@ MessageList.prototype = {
         }
         var trailing_bookend_content, subscribed = stream_data.is_subscribed(stream);
         if (subscribed) {
-            if (this.last_message_historical) {
-                trailing_bookend_content = this.subscribed_bookend_content(stream);
-            }
+            trailing_bookend_content = this.subscribed_bookend_content(stream);
         } else {
             if (!this.last_message_historical) {
                 trailing_bookend_content = this.unsubscribed_bookend_content(stream);
@@ -371,7 +373,7 @@ MessageList.prototype = {
             }
         }
         if (trailing_bookend_content !== undefined) {
-            this.view.render_trailing_bookend(trailing_bookend_content);
+            this.view.render_trailing_bookend(trailing_bookend_content, subscribed);
         }
     },
 
@@ -521,7 +523,7 @@ MessageList.prototype = {
         this.rerender();
     },
 
-    all: function MessageList_all() {
+    all_messages: function MessageList_all_messages() {
         return this._items;
     },
 
@@ -620,15 +622,23 @@ MessageList.prototype = {
     }
 };
 
+exports.all = new exports.MessageList(
+    undefined, undefined,
+    {muting_enabled: false}
+);
+
 // We stop autoscrolling when the user is clearly in the middle of
 // doing something.  Be careful, though, if you try to capture
 // mousemove, then you will have to contend with the autoscroll
 // itself generating mousemove events.
-$(document).on('message_selected.zulip hashchange.zulip mousewheel', function (event) {
+$(document).on('message_selected.zulip zuliphashchange.zulip mousewheel', function (event) {
     viewport.stop_auto_scrolling();
 });
+
+return exports;
+
 }());
 /*jslint nomen: false */
 if (typeof module !== 'undefined') {
-    module.exports = MessageList;
+    module.exports = message_list;
 }

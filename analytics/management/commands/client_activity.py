@@ -1,8 +1,11 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+from typing import Any
+
+from argparse import ArgumentParser
 from django.core.management.base import BaseCommand
-from django.db.models import Count
+from django.db.models import Count, QuerySet
 
 from zerver.models import UserActivity, UserProfile, Realm, \
     get_realm, get_user_profile_by_email
@@ -14,15 +17,17 @@ class Command(BaseCommand):
 
 Usage examples:
 
-python2.7 manage.py client_activity
-python2.7 manage.py client_activity zulip.com
-python2.7 manage.py client_activity jesstess@zulip.com"""
+python manage.py client_activity
+python manage.py client_activity zulip.com
+python manage.py client_activity jesstess@zulip.com"""
 
     def add_arguments(self, parser):
+        # type: (ArgumentParser) -> None
         parser.add_argument('arg', metavar='<arg>', type=str, nargs='?', default=None,
                             help="realm or user to estimate client activity for")
 
     def compute_activity(self, user_activity_objects):
+        # type: (QuerySet) -> None
         # Report data from the past week.
         #
         # This is a rough report of client activity because we inconsistently
@@ -54,6 +59,7 @@ python2.7 manage.py client_activity jesstess@zulip.com"""
 
 
     def handle(self, *args, **options):
+        # type: (*Any, **str) -> None
         if options['arg'] is None:
             # Report global activity.
             self.compute_activity(UserActivity.objects.all())

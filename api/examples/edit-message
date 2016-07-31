@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 # Copyright © 2012 Zulip, Inc.
@@ -21,6 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+from __future__ import print_function
 import sys
 import os
 import optparse
@@ -53,4 +54,4 @@ if options.subject != "":
     message_data["subject"] = options.subject
 if options.content != "":
     message_data["content"] = options.content
-print client.update_message(message_data)
+print(client.update_message(message_data))

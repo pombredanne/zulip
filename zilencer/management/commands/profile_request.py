@@ -1,9 +1,11 @@
 from __future__ import absolute_import
+from typing import Any, Dict
 
+from django.http import HttpRequest, HttpResponse
 from optparse import make_option
 from django.core.management.base import BaseCommand
 from zerver.models import get_user_profile_by_email, UserMessage
-from zerver.views.old_messages import get_old_messages_backend
+from zerver.views.messages import get_old_messages_backend
 import cProfile
 import logging
 from zerver.middleware import LogRequests
@@ -12,10 +14,12 @@ request_logger = LogRequests()
 
 class MockSession(object):
     def __init__(self):
+        # type: () -> None
         self.modified = False
 
-class MockRequest(object):
+class MockRequest(HttpRequest):
     def __init__(self, email):
+        # type: (str) -> None
         self.user = get_user_profile_by_email(email)
         self.path = '/'
         self.method = "POST"
@@ -23,13 +27,15 @@ class MockRequest(object):
         self.REQUEST = {"anchor": UserMessage.objects.filter(user_profile=self.user).order_by("-message")[200].message_id,
                         "num_before": 1200,
                         "num_after": 200}
-        self.GET = {}
+        self.GET = {} # type: Dict[Any, Any]
         self.session = MockSession()
 
     def get_full_path(self):
+        # type: () -> str
         return self.path
 
 def profile_request(request):
+    # type: (HttpRequest) -> HttpResponse
     request_logger.process_request(request)
     prof = cProfile.Profile()
     prof.enable()
@@ -47,4 +53,5 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # type: (*Any, **Any) -> None
         profile_request(MockRequest(options["email"]))

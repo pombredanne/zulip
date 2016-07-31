@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 from __future__ import print_function
+from typing import Any, Generator, Iterable, Tuple
 
 import os
 import pty
@@ -7,7 +8,8 @@ import sys
 import errno
 
 def run_parallel(job, data, threads=6):
-    pids = {}
+    # type: (Any, Iterable[Any], int) -> Generator[Tuple[int, Any], None, None]
+    pids = {} # type: Dict[int, Any]
 
     def wait_for_one():
         while True:
@@ -26,7 +28,7 @@ def run_parallel(job, data, threads=6):
             except OSError as e:
                 if e.errno != errno.EBADF:
                     raise
-            sys.stdin = open("/dev/null", "r")
+            sys.stdin = open("/dev/null", "r") # type: ignore # py2 and py3 stubs are not compatible
             os._exit(job(item))
 
         pids[pid] = item

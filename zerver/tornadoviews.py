@@ -1,47 +1,52 @@
 from __future__ import absolute_import
 
-from django.views.decorators.csrf import csrf_exempt
-from zerver.models import get_client
+from django.utils.translation import ugettext as _
+from django.http import HttpRequest, HttpResponse
+
+from six import text_type
+
+from zerver.models import get_client, UserProfile, Client
 
 from zerver.decorator import asynchronous, \
     authenticated_json_post_view, internal_notify_view, RespondAsynchronously, \
-    has_request_variables, REQ
+    has_request_variables, REQ, _RespondAsynchronously
 
 from zerver.lib.response import json_success, json_error
 from zerver.lib.validator import check_bool, check_list, check_string
-from zerver.lib.event_queue import allocate_client_descriptor, get_client_descriptor, \
-    process_notification
-from zerver.lib.narrow import check_supported_events_narrow_filter
+from zerver.lib.event_queue import get_client_descriptor, \
+    process_notification, fetch_events
+from django.core.handlers.base import BaseHandler
 
+from typing import Union, Optional, Iterable, Sequence, List
+import time
 import ujson
-import logging
-
-from zerver.lib.rest import rest_dispatch as _rest_dispatch
-rest_dispatch = csrf_exempt((lambda request, *args, **kwargs: _rest_dispatch(request, globals(), *args, **kwargs)))
 
 @internal_notify_view
 def notify(request):
+    # type: (HttpRequest) -> HttpResponse
     process_notification(ujson.loads(request.POST['data']))
     return json_success()
 
 @has_request_variables
 def cleanup_event_queue(request, user_profile, queue_id=REQ()):
-    client = get_client_descriptor(queue_id)
+    # type: (HttpRequest, UserProfile, text_type) -> HttpResponse
+    client = get_client_descriptor(str(queue_id))
     if client is None:
-        return json_error("Bad event queue id: %s" % (queue_id,))
+        return json_error(_("Bad event queue id: %s") % (queue_id,))
     if user_profile.id != client.user_profile_id:
-        return json_error("You are not authorized to access this queue")
+        return json_error(_("You are not authorized to access this queue"))
     request._log_data['extra'] = "[%s]" % (queue_id,)
     client.cleanup()
     return json_success()
 
 @authenticated_json_post_view
 def json_get_events(request, user_profile):
+    # type: (HttpRequest, UserProfile) -> Union[HttpResponse, _RespondAsynchronously]
     return get_events_backend(request, user_profile, apply_markdown=True)
 
 @asynchronous
 @has_request_variables
-def get_events_backend(request, user_profile, handler = None,
+def get_events_backend(request, user_profile, handler,
                        user_client = REQ(converter=get_client, default=None),
                        last_event_id = REQ(converter=int, default=None),
                        queue_id = REQ(default=None),
@@ -51,45 +56,43 @@ def get_events_backend(request, user_profile, handler = None,
                        dont_block = REQ(default=False, validator=check_bool),
                        narrow = REQ(default=[], validator=check_list(None)),
                        lifespan_secs = REQ(default=0, converter=int)):
+    # type: (HttpRequest, UserProfile, BaseHandler, Optional[Client], Optional[int], Optional[List[text_type]], bool, bool, Optional[text_type], bool, Iterable[Sequence[text_type]], int) -> Union[HttpResponse, _RespondAsynchronously]
     if user_client is None:
         user_client = request.client
 
-    was_connected = False
-    orig_queue_id = queue_id
+    events_query = dict(
+        user_profile_id = user_profile.id,
+        user_profile_email = user_profile.email,
+        queue_id = queue_id,
+        last_event_id = last_event_id,
+        event_types = event_types,
+        client_type_name = user_client.name,
+        all_public_streams = all_public_streams,
+        lifespan_secs = lifespan_secs,
+        narrow = narrow,
+        dont_block = dont_block,
+        handler_id = handler.handler_id)
+
     if queue_id is None:
-        if dont_block:
-            client = allocate_client_descriptor(user_profile.id, user_profile.realm.id,
-                                                event_types, user_client, apply_markdown,
-                                                all_public_streams, lifespan_secs,
-                                                narrow=narrow)
-            queue_id = client.event_queue.id
-        else:
-            return json_error("Missing 'queue_id' argument")
-    else:
-        if last_event_id is None:
-            return json_error("Missing 'last_event_id' argument")
-        client = get_client_descriptor(queue_id)
-        if client is None:
-            return json_error("Bad event queue id: %s" % (queue_id,))
-        if user_profile.id != client.user_profile_id:
-            return json_error("You are not authorized to get events from this queue")
-        client.event_queue.prune(last_event_id)
-        was_connected = client.finish_current_handler()
+        events_query['new_queue_data'] = dict(
+            user_profile_id = user_profile.id,
+            realm_id = user_profile.realm.id,
+            user_profile_email = user_profile.email,
+            event_types = event_types,
+            client_type_name = user_client.name,
+            apply_markdown = apply_markdown,
+            all_public_streams = all_public_streams,
+            queue_timeout = lifespan_secs,
+            last_connection_time = time.time(),
+            narrow = narrow)
 
-    if not client.event_queue.empty() or dont_block:
-        ret = {'events': client.event_queue.contents()}
-        if orig_queue_id is None:
-            ret['queue_id'] = queue_id
-        request._log_data['extra'] = "[%s/%s]" % (queue_id, len(ret["events"]))
-        if was_connected:
-            request._log_data['extra'] += " [was connected]"
-        return json_success(ret)
+    result = fetch_events(events_query)
+    if "extra_log_data" in result:
+        request._log_data['extra'] = result["extra_log_data"]
 
-    handler._request = request
-    if was_connected:
-        logging.info("Disconnected handler for queue %s (%s/%s)" % (queue_id, user_profile.email,
-                                                                    user_client.name))
-    client.connect_handler(handler)
-
-    # runtornado recognizes this special return value.
-    return RespondAsynchronously
+    if result["type"] == "async":
+        handler._request = request
+        return RespondAsynchronously
+    if result["type"] == "error":
+        return json_error(result["message"])
+    return json_success(result["response"])

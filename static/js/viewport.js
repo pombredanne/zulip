@@ -5,6 +5,11 @@ var jwindow;
 var dimensions = {};
 var in_stoppable_autoscroll = false;
 
+
+// Includes both scroll and arrow events. Negative means scroll up,
+// positive means scroll down.
+exports.last_movement_direction = 1;
+
 exports.at_top = function () {
     return (exports.scrollTop() <= 0);
 };
@@ -95,7 +100,7 @@ exports.set_message_position = function (message_top, message_height, viewport_i
         message_top
         - message_offset;
 
-    suppress_scroll_pointer_update = true; // Gets set to false in the scroll handler.
+    pointer.suppress_scroll_pointer_update = true; // Gets set to false in the scroll handler.
     exports.scrollTop(new_scroll_top);
 };
 
@@ -258,7 +263,7 @@ exports.is_narrow = function () {
 };
 
 exports.system_initiated_animate_scroll = function (scroll_amount) {
-    suppress_scroll_pointer_update = true; // Gets set to false in the scroll handler.
+    pointer.suppress_scroll_pointer_update = true; // Gets set to false in the scroll handler.
     var viewport_offset = exports.scrollTop();
     in_stoppable_autoscroll = true;
     exports.message_pane.animate({
@@ -270,7 +275,7 @@ exports.system_initiated_animate_scroll = function (scroll_amount) {
 };
 
 exports.user_initiated_animate_scroll = function (scroll_amount) {
-    suppress_scroll_pointer_update = true; // Gets set to false in the scroll handler.
+    pointer.suppress_scroll_pointer_update = true; // Gets set to false in the scroll handler.
     in_stoppable_autoscroll = false; // defensive
 
     var viewport_offset = exports.scrollTop();
@@ -279,6 +284,47 @@ exports.user_initiated_animate_scroll = function (scroll_amount) {
         scrollTop: viewport_offset + scroll_amount
     });
 };
+
+exports.recenter_view = function (message, opts) {
+    opts = opts || {};
+
+    // Barnowl-style recentering: if the pointer is too high, move it to
+    // the 1/2 marks. If the pointer is too low, move it to the 1/7 mark.
+    // See keep_pointer_in_view() in pointer.js for related logic to keep the pointer onscreen.
+
+    var viewport_info = exports.message_viewport_info();
+    var top_threshold = viewport_info.visible_top;
+
+    var bottom_threshold = viewport_info.visible_top + viewport_info.visible_height;
+
+    var message_top = message.offset().top;
+    var message_height = message.outerHeight(true);
+    var message_bottom = message_top + message_height;
+
+    var is_above = message_top < top_threshold;
+    var is_below = message_bottom > bottom_threshold;
+
+    if (opts.from_scroll) {
+        // If the message you're trying to center on is already in view AND
+        // you're already trying to move in the direction of that message,
+        // don't try to recenter. This avoids disorienting jumps when the
+        // pointer has gotten itself outside the threshold (e.g. by
+        // autoscrolling).
+        if (is_above && exports.last_movement_direction >= 0) {
+            return;
+        }
+        if (is_below && exports.last_movement_direction <= 0) {
+            return;
+        }
+    }
+
+    if (is_above || opts.force_center) {
+        exports.set_message_position(message_top, message_height, viewport_info, 1/2);
+    } else if (is_below) {
+        exports.set_message_position(message_top, message_height, viewport_info, 1/7);
+    }
+};
+
 
 $(function () {
     jwindow = $(window);

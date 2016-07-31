@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
         migrations.AlterModelManagers(
             name='userprofile',
             managers=[
-                (b'objects', django.contrib.auth.models.UserManager()),
+                ('objects', django.contrib.auth.models.UserManager()),
             ],
         ),
         migrations.AlterField(
@@ -52,11 +52,6 @@ class Migration(migrations.Migration):
             model_name='userprofile',
             name='email',
             field=models.EmailField(unique=True, max_length=254, db_index=True),
-        ),
-        migrations.AlterField(
-            model_name='userprofile',
-            name='groups',
-            field=models.ManyToManyField(related_query_name='user', related_name='user_set', to='auth.Group', blank=True, help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.', verbose_name='groups'),
         ),
         migrations.AlterField(
             model_name='userprofile',

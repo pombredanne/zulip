@@ -6,6 +6,7 @@ var unread_mentioned = new Dict();
 var unread_subjects = new Dict({fold_case: true});
 var unread_privates = new Dict();
 exports.suppress_unread_counts = true;
+exports.messages_read_in_narrow = false;
 
 exports.message_unread = function (message) {
     if (message === undefined) {
@@ -92,7 +93,7 @@ exports.declare_bankruptcy = function () {
 exports.num_unread_current_messages = function () {
     var num_unread = 0;
 
-    _.each(current_msg_list.all(), function (msg) {
+    _.each(current_msg_list.all_messages(), function (msg) {
         if ((msg.id > current_msg_list.selected_id()) && exports.message_unread(msg)) {
             num_unread += 1;
         }
@@ -148,8 +149,7 @@ exports.get_counts = function () {
 
     if (narrow.active()) {
         res.unread_in_current_view = exports.num_unread_current_messages();
-    }
-    else {
+    } else {
         res.unread_in_current_view = res.home_unread_messages;
     }
 
@@ -194,7 +194,7 @@ exports.enable = function enable() {
 };
 
 exports.mark_all_as_read = function mark_all_as_read(cont) {
-    _.each(all_msg_list.all(), function (msg) {
+    _.each(message_list.all.all_messages(), function (msg) {
         msg.flags = msg.flags || [];
         msg.flags.push('read');
     });
@@ -202,7 +202,7 @@ exports.mark_all_as_read = function mark_all_as_read(cont) {
     exports.update_unread_counts();
 
     channel.post({
-        url:      '/json/update_message_flags',
+        url:      '/json/messages/flags',
         idempotent: true,
         data:     {messages: JSON.stringify([]),
                    all:      true,
@@ -221,8 +221,8 @@ exports.mark_messages_as_read = function mark_messages_as_read (messages, option
             // Don't do anything if the message is already read.
             return;
         }
-        if (current_msg_list === narrowed_msg_list) {
-            unread_messages_read_in_narrow = true;
+        if (current_msg_list === message_list.narrowed) {
+            unread.messages_read_in_narrow = true;
         }
 
         if (options.from !== "server") {
@@ -234,9 +234,9 @@ exports.mark_messages_as_read = function mark_messages_as_read (messages, option
         message.unread = false;
         unread.process_read_message(message, options);
         home_msg_list.show_message_as_read(message, options);
-        all_msg_list.show_message_as_read(message, options);
-        if (narrowed_msg_list) {
-            narrowed_msg_list.show_message_as_read(message, options);
+        message_list.all.show_message_as_read(message, options);
+        if (message_list.narrowed) {
+            message_list.narrowed.show_message_as_read(message, options);
         }
         notifications.close_notification(message);
         processed = true;
@@ -268,7 +268,34 @@ exports.process_visible = function process_visible(update_cursor) {
 };
 
 exports.mark_current_list_as_read = function mark_current_list_as_read(options) {
-    exports.mark_messages_as_read(current_msg_list.all(), options);
+    exports.mark_messages_as_read(current_msg_list.all_messages(), options);
+};
+
+exports.mark_stream_as_read = function mark_stream_as_read(stream, cont) {
+    channel.post({
+        url:      '/json/messages/flags',
+        idempotent: true,
+        data:     {messages: JSON.stringify([]),
+                   all:      false,
+                   op:       'add',
+                   flag:     'read',
+                   stream_name: stream
+                  },
+        success:  cont});
+};
+
+exports.mark_topic_as_read = function mark_topic_as_read(stream, topic, cont) {
+    channel.post({
+    url:      '/json/messages/flags',
+    idempotent: true,
+    data:     {messages: JSON.stringify([]),
+               all:      false,
+               op:       'add',
+               flag:     'read',
+               topic_name: topic,
+               stream_name: stream
+               },
+    success:  cont});
 };
 
 return exports;

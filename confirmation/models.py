@@ -30,6 +30,15 @@ except ImportError:
 
 B16_RE = re.compile('^[a-f0-9]{40}$')
 
+def check_key_is_valid(creation_key):
+    if not RealmCreationKey.objects.filter(creation_key=creation_key).exists():
+        return False
+    days_sofar = (now() - RealmCreationKey.objects.get(creation_key=creation_key).date_created).days
+    # Realm creation link expires after settings.REALM_CREATION_LINK_VALIDITY_DAYS
+    if days_sofar <= settings.REALM_CREATION_LINK_VALIDITY_DAYS:
+        return True
+    return False
+
 def generate_key():
     return generate_random_token(40)
 
@@ -39,6 +48,13 @@ def generate_activation_url(key):
                         reverse('confirmation.views.confirm',
                                 kwargs={'confirmation_key': key}))
 
+def generate_realm_creation_url():
+    key = generate_key()
+    RealmCreationKey.objects.create(creation_key=key, date_created=now())
+    return u'%s%s%s' % (settings.EXTERNAL_URI_SCHEME,
+                        settings.EXTERNAL_HOST,
+                        reverse('zerver.views.create_realm',
+                        kwargs={'creation_key': key}))
 
 class ConfirmationManager(models.Manager):
 
@@ -74,8 +90,12 @@ class ConfirmationManager(models.Manager):
         })
         if additional_context is not None:
             context.update(additional_context)
+        if obj.realm is not None and obj.realm.is_zephyr_mirror_realm:
+            template_name = "mituser"
+        else:
+            template_name = obj._meta.model_name
         templates = [
-            'confirmation/%s_confirmation_email_subject.txt' % obj._meta.model_name,
+            'confirmation/%s_confirmation_email_subject.txt' % (template_name,),
             'confirmation/confirmation_email_subject.txt',
         ]
         if subject_template_path:
@@ -84,7 +104,7 @@ class ConfirmationManager(models.Manager):
             template = loader.select_template(templates)
         subject = template.render(context).strip().replace(u'\n', u' ') # no newlines, please
         templates = [
-            'confirmation/%s_confirmation_email_body.txt' % obj._meta.model_name,
+            'confirmation/%s_confirmation_email_body.txt' % (template_name,),
             'confirmation/confirmation_email_body.txt',
         ]
         if body_template_path:
@@ -110,4 +130,8 @@ class Confirmation(models.Model):
         verbose_name_plural = _('confirmation emails')
 
     def __unicode__(self):
-        return _('confirmation email for %s') % self.content_object
+        return _('confirmation email for %s') % (self.content_object,)
+
+class RealmCreationKey(models.Model):
+    creation_key = models.CharField(_('activation key'), max_length=40)
+    date_created = models.DateTimeField(_('created'), default=now)

@@ -196,15 +196,7 @@ MessageListView.prototype = {
 
             message_container.contains_mention = notifications.speaking_at_me(message_container.msg);
             message_container.msg.unread = unread.message_unread(message_container.msg);
-
-            if (message_container.msg.is_me_message) {
-                // Slice the '<p>/me ' off the front, and '</p>' off the end
-                message_container.status_message = message_container.msg.content.slice(4 + 3, -4);
-                message_container.include_sender = true;
-            }
-            else {
-                message_container.status_message = false;
-            }
+            self._maybe_format_me_message(message_container);
 
             prev = message_container;
         });
@@ -340,7 +332,7 @@ MessageListView.prototype = {
             if (row.hasClass('mention')) {
                 row.find('.user-mention').each(function () {
                     var email = $(this).attr('data-user-email');
-                    if (email === '*' || email === page_params.email) {
+                    if (email === '*' || util.is_current_user(email)) {
                         $(this).addClass('user-mention-me');
                     }
                 });
@@ -512,7 +504,16 @@ MessageListView.prototype = {
         if (last_message_group !== undefined) {
             list.last_message_historical = _.last(last_message_group.message_containers).msg.historical;
         }
-        list.update_trailing_bookend();
+
+        var stream_name = narrow.stream();
+        if (stream_name !== undefined) {
+            // If user narrows to a stream, doesn't update
+            // trailing bookend if user is subscribed.
+            var sub = stream_data.get_sub(stream_name);
+            if (!sub.subscribed) {
+                list.update_trailing_bookend();
+            }
+        }
 
         if (list === current_msg_list) {
             // Update the fade.
@@ -550,15 +551,14 @@ MessageListView.prototype = {
             if (elem.is("div")) {
                 new_messages_height += elem.height();
                 // starting from the last message, ignore message heights that weren't sent by me.
-                if(id_of_last_message_sent_by_us > -1) {
+                if (id_of_last_message_sent_by_us > -1) {
                     distance_to_last_message_sent_by_me += elem.height();
                     return;
                 }
                 var row_id = rows.id(elem);
                 // check for `row_id` NaN in case we're looking at a date row or bookend row
                 if (row_id > -1 &&
-                    this.get_message(row_id).sender_email === page_params.email)
-                {
+                    util.is_current_user(this.get_message(row_id).sender_email)) {
                     distance_to_last_message_sent_by_me += elem.height();
                     id_of_last_message_sent_by_us = rows.id(elem);
                 }
@@ -568,7 +568,7 @@ MessageListView.prototype = {
         // autoscroll_forever: if we're on the last message, keep us on the last message
         if (last_message_was_selected && page_params.autoscroll_forever) {
             this.list.select_id(this.list.last().id, {from_rendering: true});
-            scroll_to_selected();
+            navigate.scroll_to_selected();
             this.list.reselect_selected_id();
             return;
         }
@@ -588,7 +588,7 @@ MessageListView.prototype = {
         // autoscroll_forever: if we've sent a message, move pointer at least that far.
         if (page_params.autoscroll_forever && id_of_last_message_sent_by_us > -1 && (rows.last_visible().offset().top - this.list.selected_row().offset().top) < (viewport.height())) {
             this.list.select_id(id_of_last_message_sent_by_us, {from_rendering: true});
-            scroll_to_selected();
+            navigate.scroll_to_selected();
             return;
         }
 
@@ -697,8 +697,7 @@ MessageListView.prototype = {
         }
 
         this.clear_table();
-        this.render(this.list.all().slice(this._render_win_start,
-                                          this._render_win_end), 'bottom');
+        this.render(this.list.all_messages().slice(this._render_win_start, this._render_win_end), 'bottom');
 
         // If we could see the newly selected message, scroll the
         // window such that the newly selected message is at the
@@ -744,6 +743,7 @@ MessageListView.prototype = {
 
         // Re-render just this one message
         this._add_msg_timestring(message_container);
+        this._maybe_format_me_message(message_container);
 
         var msg_to_render = _.extend(message_container, {table_name: this.table_name});
         var rendered_msg = $(templates.render('single_message', msg_to_render));
@@ -829,8 +829,7 @@ MessageListView.prototype = {
 
         this.update_render_window(this.list.selected_idx(), false);
 
-        this.render(this.list.all().slice(this._render_win_start,
-                                          this._render_win_end), 'bottom');
+        this.render(this.list.all_messages().slice(this._render_win_start, this._render_win_end), 'bottom');
     },
 
     clear_table: function MessageListView_clear_table() {
@@ -852,10 +851,11 @@ MessageListView.prototype = {
         trailing_bookend.remove();
     },
 
-    render_trailing_bookend: function MessageListView_render_trailing_bookend(trailing_bookend_content) {
+    render_trailing_bookend: function MessageListView_render_trailing_bookend(trailing_bookend_content, subscribed) {
         var rendered_trailing_bookend = $(templates.render('bookend', {
             bookend_content: trailing_bookend_content,
-            trailing: true
+            trailing: true,
+            subscribed: subscribed
         }));
         rows.get_table(this.table_name).append(rendered_trailing_bookend);
     },
@@ -885,6 +885,16 @@ MessageListView.prototype = {
             this.message_containers[new_id] = message_container;
         }
 
+    },
+
+    _maybe_format_me_message: function MessageListView__maybe_format_me_message(message_container) {
+        if (message_container.msg.is_me_message) {
+            // Slice the '<p>/me ' off the front, and '</p>' off the end
+            message_container.status_message = message_container.msg.content.slice(4 + 3, -4);
+            message_container.include_sender = true;
+        } else {
+            message_container.status_message = false;
+        }
     }
 };
 

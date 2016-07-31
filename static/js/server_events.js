@@ -67,7 +67,15 @@ function get_events_success(events) {
             new_pointer = event.pointer;
             break;
         case 'restart':
-            reload.initiate({message: "The application has been updated; reloading!"});
+            var reload_options = {save_pointer: true,
+                                  save_narrow: true,
+                                  save_compose: true,
+                                  message: "The application has been updated; reloading!"
+                                 };
+            if (event.immediate) {
+                reload_options.immediate = true;
+            }
+            reload.initiate(reload_options);
             break;
         case 'update_message':
             messages_to_update.push(event);
@@ -80,8 +88,17 @@ function get_events_success(events) {
                 page_params.realm_invite_required = event.value;
             } else if (event.op === 'update' && event.property === 'invite_by_admins_only') {
                 page_params.realm_invite_by_admins_only = event.value;
+            } else if (event.op === 'update' && event.property === 'create_stream_by_admins_only') {
+                page_params.realm_create_stream_by_admins_only = event.value;
+                if (!page_params.is_admin) {
+                    page_params.can_create_streams = !page_params.realm_create_stream_by_admins_only;
+                }
             } else if (event.op === 'update' && event.property === 'restricted_to_domain') {
                 page_params.realm_restricted_to_domain = event.value;
+            } else if (event.op === 'update_dict' && event.property === 'default') {
+                $.each(event.data, function (key, value) {
+                    page_params['realm_' + key] = value;
+                });
             }
             break;
         case 'realm_user':
@@ -106,7 +123,12 @@ function get_events_success(events) {
             if (event.op === 'update') {
                 // Legacy: Stream properties are still managed by subs.js on the client side.
                 subs.update_subscription_properties(event.name, event.property, event.value);
+                admin.update_default_streams_table();
             }
+            break;
+        case 'default_streams':
+            page_params.realm_default_streams = event.default_streams;
+            admin.update_default_streams_table();
             break;
         case 'subscription':
             if (event.op === 'add') {
@@ -120,6 +142,9 @@ function get_events_success(events) {
                 });
             } else if (event.op === 'update') {
                 subs.update_subscription_properties(event.name, event.property, event.value);
+                if (event.property === 'pin_to_top') {
+                    subs.pin_or_unpin_stream(event.name);
+                }
             } else if (event.op === 'peer_add' || event.op === 'peer_remove') {
                 _.each(event.subscriptions, function (sub) {
                     var js_event_type;
@@ -165,6 +190,7 @@ function get_events_success(events) {
             break;
         case 'realm_emoji':
             emoji.update_emojis(event.realm_emoji);
+            admin.populate_emoji(event.realm_emoji);
             break;
         case 'alert_words':
             alert_words.words = event.alert_words;
@@ -189,6 +215,11 @@ function get_events_success(events) {
                 // TODO: Make this change the view immediately rather
                 // than requiring a reload or page resize.
                 page_params.left_side_userlist = event.left_side_userlist;
+            }
+            if (event.setting_name === 'default_language') {
+                // TODO: Make this change the view immediately rather
+                // than requiring a reload or page resize.
+                page_params.default_language = event.default_language;
             }
             break;
         }
@@ -218,10 +249,10 @@ function get_events_success(events) {
     }
 
     if (new_pointer !== undefined
-        && new_pointer > furthest_read)
+        && new_pointer > pointer.furthest_read)
     {
-        furthest_read = new_pointer;
-        server_furthest_read = new_pointer;
+        pointer.furthest_read = new_pointer;
+        pointer.server_furthest_read = new_pointer;
         home_msg_list.select_id(new_pointer, {then_scroll: true, use_closest: true});
     }
 
@@ -243,6 +274,10 @@ function get_events_success(events) {
 
 function get_events(options) {
     options = _.extend({dont_block: false}, options);
+
+    if (reload.is_in_progress()) {
+        return;
+    }
 
     get_events_params.dont_block = options.dont_block || get_events_failures > 0;
     if (get_events_params.queue_id === undefined) {
@@ -287,7 +322,10 @@ function get_events(options) {
                     ($.parseJSON(xhr.responseText).msg.indexOf("too old") !== -1 ||
                      $.parseJSON(xhr.responseText).msg.indexOf("Bad event queue id") !== -1)) {
                     page_params.event_queue_expired = true;
-                    reload.initiate({immediate: true, save_state: false});
+                    reload.initiate({immediate: true,
+                                     save_pointer: false,
+                                     save_narrow: false,
+                                     save_compose: true});
                 }
 
                 if (error_type === 'abort') {
@@ -368,6 +406,8 @@ exports.cleanup_event_queue = function cleanup_event_queue() {
     if (page_params.event_queue_expired === true) {
         return;
     }
+    // Set expired because in a reload we may be called twice.
+    page_params.event_queue_expired = true;
     channel.del({
         url:      '/json/events',
         data:     {queue_id: page_params.event_queue_id}

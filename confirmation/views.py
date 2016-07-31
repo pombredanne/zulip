@@ -8,11 +8,14 @@ __revision__ = '$Id: views.py 21 2008-12-05 09:21:03Z jarek.zgoda $'
 from django.shortcuts import render_to_response
 from django.template import RequestContext
 from django.conf import settings
+from django.http import HttpRequest, HttpResponse
 
 from confirmation.models import Confirmation
+from zproject.jinja2 import render_to_response
 
 
 def confirm(request, confirmation_key):
+    # type: (HttpRequest, str) -> HttpResponse
     confirmation_key = confirmation_key.lower()
     obj = Confirmation.objects.confirm(confirmation_key)
     confirmed = True
@@ -31,13 +34,12 @@ def confirm(request, confirmation_key):
         'key': confirmation_key,
         'full_name': request.GET.get("full_name", None),
         'support_email': settings.ZULIP_ADMINISTRATOR,
-        'voyager': settings.VOYAGER
+        'verbose_support_offers': settings.VERBOSE_SUPPORT_OFFERS,
     }
     templates = [
         'confirmation/confirm.html',
     ]
     if obj:
         # if we have an object, we can use specific template
-        templates.insert(0, 'confirmation/confirm_%s.html' % obj._meta.model_name)
-    return render_to_response(templates, ctx,
-        context_instance=RequestContext(request))
+        templates.insert(0, 'confirmation/confirm_%s.html' % (obj._meta.model_name,))
+    return render_to_response(templates, ctx, request=request)

@@ -1,9 +1,12 @@
 from __future__ import absolute_import
+from typing import Any, Callable, Iterable, Tuple
 
 from collections import defaultdict
 import datetime
+import six
+from six import text_type
 
-from django.db.models import Q
+from django.db.models import Q, QuerySet
 from django.template import loader
 from django.conf import settings
 
@@ -33,6 +36,7 @@ logger.addHandler(file_handler)
 #    diversely comment upon topics.
 
 def gather_hot_conversations(user_profile, stream_messages):
+    # type: (UserProfile, QuerySet) -> List[Dict[str, Any]]
     # Gather stream conversations of 2 types:
     # 1. long conversations
     # 2. conversations where many different people participated
@@ -40,8 +44,8 @@ def gather_hot_conversations(user_profile, stream_messages):
     # Returns a list of dictionaries containing the templating
     # information for each hot conversation.
 
-    conversation_length = defaultdict(int)
-    conversation_diversity = defaultdict(set)
+    conversation_length = defaultdict(int) # type: Dict[Tuple[int, text_type], int]
+    conversation_diversity = defaultdict(set) # type: Dict[Tuple[int, text_type], Set[text_type]]
     for user_message in stream_messages:
         if not user_message.message.sent_by_human():
             # Don't include automated messages in the count.
@@ -53,10 +57,10 @@ def gather_hot_conversations(user_profile, stream_messages):
             user_message.message.sender.full_name)
         conversation_length[key] += 1
 
-    diversity_list = conversation_diversity.items()
+    diversity_list = list(conversation_diversity.items())
     diversity_list.sort(key=lambda entry: len(entry[1]), reverse=True)
 
-    length_list = conversation_length.items()
+    length_list = list(conversation_length.items())
     length_list.sort(key=lambda entry: entry[1], reverse=True)
 
     # Get up to the 4 best conversations from the diversity list
@@ -96,10 +100,11 @@ def gather_hot_conversations(user_profile, stream_messages):
     return hot_conversation_render_payloads
 
 def gather_new_users(user_profile, threshold):
+    # type: (UserProfile, datetime.datetime) -> Tuple[int, List[text_type]]
     # Gather information on users in the realm who have recently
     # joined.
-    if user_profile.realm.domain == "mit.edu":
-        new_users = []
+    if user_profile.realm.is_zephyr_mirror_realm:
+        new_users = [] # type: List[UserProfile]
     else:
         new_users = list(UserProfile.objects.filter(
                 realm=user_profile.realm, date_joined__gt=threshold,
@@ -109,26 +114,28 @@ def gather_new_users(user_profile, threshold):
     return len(user_names), user_names
 
 def gather_new_streams(user_profile, threshold):
-    if user_profile.realm.domain == "mit.edu":
-        new_streams = []
+    # type: (UserProfile, datetime.datetime) -> Tuple[int, Dict[str, List[text_type]]]
+    if user_profile.realm.is_zephyr_mirror_realm:
+        new_streams = [] # type: List[Stream]
     else:
         new_streams = list(get_active_streams(user_profile.realm).filter(
                 invite_only=False, date_created__gt=threshold))
 
-    base_url = "https://%s/#narrow/stream/" % (settings.EXTERNAL_HOST,)
+    base_url = u"https://%s/#narrow/stream/" % (settings.EXTERNAL_HOST,)
 
     streams_html = []
     streams_plain = []
 
     for stream in new_streams:
         narrow_url = base_url + hashchange_encode(stream.name)
-        stream_link = "<a href='%s'>%s</a>" % (narrow_url, stream.name)
+        stream_link = u"<a href='%s'>%s</a>" % (narrow_url, stream.name)
         streams_html.append(stream_link)
         streams_plain.append(stream.name)
 
     return len(new_streams), {"html": streams_html, "plain": streams_plain}
 
 def enough_traffic(unread_pms, hot_conversations, new_streams, new_users):
+    # type: (text_type, text_type, int, int) -> bool
     if unread_pms or hot_conversations:
         # If you have any unread traffic, good enough.
         return True
@@ -139,6 +146,7 @@ def enough_traffic(unread_pms, hot_conversations, new_streams, new_users):
     return False
 
 def send_digest_email(user_profile, html_content, text_content):
+    # type: (UserProfile, text_type, text_type) -> None
     recipients = [{'email': user_profile.email, 'name': user_profile.full_name}]
     subject = "While you've been gone - Zulip"
     sender = {'email': settings.NOREPLY_EMAIL_ADDRESS, 'name': 'Zulip'}
@@ -149,20 +157,21 @@ def send_digest_email(user_profile, html_content, text_content):
                       tags=["digest-emails"])
 
 def handle_digest_email(user_profile_id, cutoff):
+    # type: (int, int) -> None
     user_profile=UserProfile.objects.get(id=user_profile_id)
     # Convert from epoch seconds to a datetime object.
-    cutoff = datetime.datetime.utcfromtimestamp(int(cutoff))
+    cutoff_date = datetime.datetime.utcfromtimestamp(int(cutoff))
 
     all_messages = UserMessage.objects.filter(
         user_profile=user_profile,
-        message__pub_date__gt=cutoff).order_by("message__pub_date")
+        message__pub_date__gt=cutoff_date).order_by("message__pub_date")
 
     # Start building email template data.
     template_payload = {
         'name': user_profile.full_name,
         'external_host': settings.EXTERNAL_HOST,
         'unsubscribe_link': one_click_unsubscribe_link(user_profile, "digest")
-        }
+        } # type: Dict[str, Any]
 
     # Gather recent missed PMs, re-using the missed PM email logic.
     # You can't have an unread message that you sent, but when testing
@@ -192,13 +201,13 @@ def handle_digest_email(user_profile_id, cutoff):
 
     # Gather new streams.
     new_streams_count, new_streams = gather_new_streams(
-        user_profile, cutoff)
+        user_profile, cutoff_date)
     template_payload["new_streams"] = new_streams
     template_payload["new_streams_count"] = new_streams_count
 
     # Gather users who signed up recently.
     new_users_count, new_users = gather_new_users(
-        user_profile, cutoff)
+        user_profile, cutoff_date)
     template_payload["new_users"] = new_users
 
     text_content = loader.render_to_string(

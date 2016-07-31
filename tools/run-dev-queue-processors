@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
 # This script is only meant to be run from run-dev.py, which sets up the
 # environment correctly and passes the correct arguments for manage.py.  It is a
@@ -16,6 +16,5 @@ from zerver.worker.queue_processors import get_active_worker_queues
 queues = get_active_worker_queues()
 
 args = sys.argv[1:]
-for queue in queues:
-    subprocess.Popen(['python', 'manage.py', 'process_queue'] + args + [queue],
-                     stderr=subprocess.STDOUT)
+subprocess.Popen(['python', 'manage.py', 'process_queue', '--all'] + args,
+                 stderr=subprocess.STDOUT)

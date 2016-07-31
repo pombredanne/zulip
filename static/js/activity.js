@@ -29,7 +29,7 @@ var presence_descriptions = {
     idle:   'is not active'
 };
 
-/* Keep in sync with views.py:json_update_active_status() */
+/* Keep in sync with views.py:update_active_status_backend() */
 exports.ACTIVE = "active";
 exports.IDLE = "idle";
 
@@ -47,7 +47,7 @@ $("html").on("mousemove", function () {
     exports.new_user_input = true;
 });
 
-var presence_info = {};
+exports.presence_info = {};
 
 var huddle_timestamps = new Dict();
 
@@ -168,8 +168,9 @@ function filter_users_by_search(users) {
     if (user_list.length === 0) {
         // We may have received an activity ping response after
         // initiating a reload, in which case the user list may no
-        // longer be available
-        return;
+        // longer be available.
+        // Return user list: useful for testing user list performance fix
+        return users;
     }
 
     var search_term = user_list.expectOne().val().trim();
@@ -202,18 +203,30 @@ function filter_users_by_search(users) {
     return filtered_users;
 }
 
-function actually_update_users() {
-    if (page_params.domain === 'mit.edu') {
-        return;  // MIT realm doesn't have a presence list
-    }
-
-    var users = Object.keys(presence_info);
+function filter_and_sort(users) {
+    users = Object.keys(users);
     users = filter_users_by_search(users);
     users = _.filter(users, function (email) {
         return people.get_by_email(email);
     });
 
-    users = sort_users(users, presence_info);
+    users = sort_users(users, exports.presence_info);
+    return users;
+}
+exports._filter_and_sort = filter_and_sort;
+
+exports.update_users = function (user_list) {
+    if (page_params.presence_disabled) {
+        return;
+    }
+
+    var users = exports.presence_info;
+    var all_users;
+    if (user_list !== undefined) {
+        all_users = filter_and_sort(users);
+        users = user_list;
+    }
+    users = filter_and_sort(users);
 
     function get_num_unread(email) {
         if (unread.suppress_unread_counts) {
@@ -227,44 +240,46 @@ function actually_update_users() {
     // the commit that added this comment.
 
     function info_for(email) {
-        var presence = presence_info[email].status;
+        var presence = exports.presence_info[email].status;
         return {
             name: people.get_by_email(email).full_name,
             email: email,
             num_unread: get_num_unread(email),
             type: presence,
             type_desc: presence_descriptions[presence],
-            mobile: presence_info[email].mobile
+            mobile: exports.presence_info[email].mobile
         };
     }
 
     var user_info = _.map(users, info_for);
-
-    $('#user_presences').html(templates.render('user_presence_rows', {users: user_info}));
+    if (user_list !== undefined) {
+        // Render right panel partially
+        $.each(user_info, function (index, user) {
+            var user_index = all_users.indexOf(user.email);
+            $('#user_presences').find('[data-email="' + user.email + '"]').remove();
+            $('#user_presences li').eq(user_index).before(templates.render('user_presence_row', user));
+        });
+    } else {
+        $('#user_presences').html(templates.render('user_presence_rows', {users: user_info}));
+    }
 
     // Update user fading, if necessary.
     compose_fade.update_faded_users();
-}
 
-// The function actually_update_users() can be pretty expensive for realms with lots
-// of users.  Not only is there more work to do in terms of rendering the user list, but
-// we also get more updates.  Large realms have reported lags while typing in the compose
-// box, and there's strong evidence that this is caused by user list updates.  This isn't a
-// perfect solution, but it should remove some pain, and there's no real harm in waiting five
-// seconds to update user activity.
-var update_users = _.throttle(actually_update_users, 5000);
-
+    // Return updated users: useful for testing user performance fix
+    return user_info;
+};
 
 function actually_update_users_for_search() {
-    actually_update_users();
+    exports.update_users();
     resize.resize_page_components();
 }
 
 var update_users_for_search = _.throttle(actually_update_users_for_search, 50);
 
 exports.update_huddles = function () {
-    if (page_params.domain === 'mit.edu') {
-        return;  // MIT realm doesn't have a presence list
+    if (page_params.presence_disabled) {
+        return;
     }
 
     var section = $('#group-pm-list').expectOne();
@@ -280,7 +295,7 @@ exports.update_huddles = function () {
         return {
             emails: huddle,
             name: exports.full_huddle_name(huddle),
-            fraction_present: exports.huddle_fraction_present(huddle, presence_info),
+            fraction_present: exports.huddle_fraction_present(huddle, exports.presence_info),
             short_name: exports.short_huddle_name(huddle)
         };
     });
@@ -338,12 +353,12 @@ exports._status_from_timestamp = status_from_timestamp;
 
 function focus_ping() {
     channel.post({
-        url: '/json/update_active_status',
+        url: '/json/users/me/presence',
         data: {status: (exports.has_focus) ? exports.ACTIVE : exports.IDLE,
                new_user_input: exports.new_user_input},
         idempotent: true,
         success: function (data) {
-            presence_info = {};
+            exports.presence_info = {};
 
             // Update Zephyr mirror activity warning
             if (data.zephyr_mirror_active === false) {
@@ -356,11 +371,11 @@ function focus_ping() {
 
             // Ping returns the active peer list
             _.each(data.presences, function (presence, this_email) {
-                if (page_params.email !== this_email) {
-                    presence_info[this_email] = status_from_timestamp(data.server_timestamp, presence);
+                if (!util.is_current_user(this_email)) {
+                    exports.presence_info[this_email] = status_from_timestamp(data.server_timestamp, presence);
                 }
             });
-            update_users();
+            exports.update_users();
             exports.update_huddles();
         }
     });
@@ -395,14 +410,18 @@ exports.initialize = function () {
 // This rerenders the user sidebar at the end, which can be slow if done too
 // often, so try to avoid calling this repeatedly.
 exports.set_user_statuses = function (users, server_time) {
+    var updated_users = {};
+    var status;
     _.each(users, function (presence, email) {
-        if (email === page_params.email) {
+        if (util.is_current_user(email)) {
             return;
         }
-        presence_info[email] = status_from_timestamp(server_time, presence);
+        status = status_from_timestamp(server_time, presence);
+        exports.presence_info[email] = status;
+        updated_users[email] = status;
     });
 
-    update_users();
+    exports.update_users(updated_users);
     exports.update_huddles();
 };
 
@@ -442,6 +461,8 @@ function maybe_select_person (e) {
             compose.start('private',
                     {trigger: 'sidebar enter key', "private_message_recipient": topPerson});
         }
+        // Clear the user filter
+        exports.escape_search();
     }
 }
 

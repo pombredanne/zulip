@@ -103,7 +103,7 @@ exports.would_receive_message = function (email) {
     // helpful if we want to emphasize the '.unfaded' class later (applied
     // to users who will definitely receive the message).
 
-    if (email === page_params.email) {
+    if (util.is_current_user(email)) {
         // We never want to fade you yourself, so pretend it's true even if
         // it's not.
         return true;
@@ -121,8 +121,7 @@ exports.would_receive_message = function (email) {
     }
 
     // PM, so check if the given email is in the recipients list.
-    var recipients = focused_recipient.reply_to.split(',');
-    return recipients.indexOf(email) !== -1;
+    return util.is_pm_recipient(email, focused_recipient);
 };
 
 function _fade_users() {
@@ -177,8 +176,7 @@ function _update_faded_messages() {
             _display_messages_normally();
             _display_users_normally();
         }
-    }
-    else {
+    } else {
         _fade_messages();
         _fade_users();
     }
@@ -213,8 +211,7 @@ exports.clear_compose = function () {
 exports.update_message_list = function () {
     if (_want_normal_display()) {
        _display_messages_normally();
-    }
-    else {
+    } else {
         _fade_messages();
     }
 };

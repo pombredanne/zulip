@@ -1,8 +1,8 @@
 var settings = (function () {
 
 var exports = {};
-var _streams_defered = $.Deferred();
-var streams = _streams_defered.promise(); // promise to the full stream list
+var _streams_deferred = $.Deferred();
+var streams = _streams_deferred.promise(); // promise to the full stream list
 
 function build_stream_list($select, extra_names) {
     if (extra_names === undefined) {
@@ -126,17 +126,17 @@ function render_bots() {
 // Choose avatar stamp fairly randomly, to help get old avatars out of cache.
 exports.avatar_stamp = Math.floor(Math.random()*100);
 
-exports.setup_page = function () {
+function _setup_page() {
     // To build the edit bot streams dropdown we need both the bot and stream
     // API results. To prevent a race streams will be initialized to a promise
     // at page load. This promise will be resolved with a list of streams after
     // the first settings page load. build_stream_list then adds a callback to
     // the promise, which in most cases will already be resolved.
-    if (!_streams_defered.isResolved()) {
+    if (_streams_deferred.state() !== "resolved") {
         channel.get({
             url: '/json/streams',
             success: function (data) {
-                _streams_defered.resolve(data.streams);
+                _streams_deferred.resolve(data.streams);
 
                 build_stream_list($('#create_bot_default_sending_stream'));
                 build_stream_list(
@@ -161,6 +161,8 @@ exports.setup_page = function () {
     $("#show_api_key_box").hide();
     $("#api_key_button_box").show();
 
+    $('#default_language').val(page_params.default_language);
+
     function clear_password_change() {
         // Clear the password boxes so that passwords don't linger in the DOM
         // for an XSS attacker to find.
@@ -183,6 +185,13 @@ exports.setup_page = function () {
         e.preventDefault();
         $('#pw_change_link').hide();
         $('#pw_change_controls').show();
+        if (page_params.password_auth_enabled !== false) {
+            // zxcvbn.js is pretty big, and is only needed on password
+            // change, so load it asynchronously.
+            $.getScript('/static/third/zxcvbn/zxcvbn.js', function () {
+                $('#pw_strength .bar').removeClass("fade");
+            });
+        }
     });
 
     $('#new_password').on('change keyup', function () {
@@ -283,11 +292,11 @@ exports.setup_page = function () {
             page_params.enable_digest_emails = result.enable_digest_emails;
         }
 
-        ui.report_success("Updated notification settings!", notify_settings_status);
+        ui.report_success(i18n.t("Updated notification settings!"), notify_settings_status);
     }
 
     function update_notification_settings_error(xhr, error_type, xhn) {
-        ui.report_error("Error changing settings", xhr, $('#notify-settings-status').expectOne());
+        ui.report_error(i18n.t("Error changing settings"), xhr, $('#notify-settings-status').expectOne());
     }
 
     function post_notify_settings_changes(notification_changes, success_func,
@@ -366,16 +375,22 @@ exports.setup_page = function () {
         var left_side_userlist = this.checked;
         var data = {};
         data.left_side_userlist = JSON.stringify(left_side_userlist);
+        var context = {};
+        if (data.left_side_userlist === "true") {
+            context.side = 'left';
+        } else {
+            context.side = 'right';
+        }
 
         channel.patch({
             url: '/json/left_side_userlist',
             data: data,
             success: function (resp, statusText, xhr, form) {
-                ui.report_success("Updated display settings!  You will need to reload the window for your changes to take effect.",
+                ui.report_success(i18n.t("User list will appear on the __side__ hand side! You will need to reload the window for your changes to take effect.", context),
                                   $('#display-settings-status').expectOne());
             },
             error: function (xhr, error_type, xhn) {
-                ui.report_error("Error updating display settings", xhr, $('#display-settings-status').expectOne());
+                ui.report_error(i18n.t("Error updating user list placement setting"), xhr, $('#display-settings-status').expectOne());
             }
         });
     });
@@ -384,16 +399,42 @@ exports.setup_page = function () {
         var data = {};
         var setting_value = $("#twenty_four_hour_time").is(":checked");
         data.twenty_four_hour_time = JSON.stringify(setting_value);
+        var context = {};
+        if (data.twenty_four_hour_time === "true") {
+            context.format = '24';
+        } else {
+            context.format = '12';
+        }
 
         channel.patch({
             url: '/json/time_setting',
             data: data,
             success: function (resp, statusText, xhr, form) {
-                ui.report_success("Updated display settings!  You will need to reload the window for your changes to take effect",
+                ui.report_success(i18n.t("Time will be displayed in the __format__-hour format!  You will need to reload the window for your changes to take effect", context),
                                   $('#display-settings-status').expectOne());
             },
             error: function (xhr, error_type, xhn) {
-                ui.report_error("Error updating display settings", xhr, $('#display-settings-status').expectOne());
+                ui.report_error(i18n.t("Error updating time format setting"), xhr, $('#display-settings-status').expectOne());
+            }
+        });
+    });
+
+    $("#default_language").change(function () {
+        var data = {};
+        var setting_value = $("#default_language").val();
+        data.default_language = JSON.stringify(setting_value);
+        var context = {};
+        context.lang = $("#default_language option:selected").text();
+
+        channel.patch({
+            url: '/json/language_setting',
+            data: data,
+            success: function (resp, statusText, xhr, form) {
+                ui.report_success(i18n.t("__lang__ is now the default language!  You will need to reload the window for your changes to take effect", context),
+                                  $('#display-settings-status').expectOne());
+            },
+            error: function (xhr, error_type, xhn) {
+                ui.report_error(i18n.t("Error updating default language setting"), xhr, $('#display-settings-status').expectOne());
             }
         });
     });
@@ -415,7 +456,7 @@ exports.setup_page = function () {
             settings_status.hide();
         },
         error: function (xhr, error_type, xhn) {
-            ui.report_error("Error getting API key", xhr, $('#settings-status').expectOne());
+            ui.report_error(i18n.t("Error getting API key"), xhr, $('#settings-status').expectOne());
             $("#show_api_key_box").hide();
             $("#get_api_key_box").show();
         }
@@ -654,7 +695,7 @@ exports.setup_page = function () {
             url: '/json/ui_settings/change',
             data: labs_updates,
             success: function (resp, statusText, xhr, form) {
-                var message = "Updated " + page_params.product_name + " Labs settings!";
+                var message = i18n.t("Updated __product_name__ Labs settings!", page_params);
                 var result = $.parseJSON(xhr.responseText);
                 var ui_settings_status = $('#ui-settings-status').expectOne();
 
@@ -666,10 +707,14 @@ exports.setup_page = function () {
                 ui.report_success(message, ui_settings_status);
             },
             error: function (xhr, error_type, xhn) {
-                ui.report_error("Error changing settings", xhr, $('#ui-settings-status').expectOne());
+                ui.report_error(i18n.t("Error changing settings"), xhr, $('#ui-settings-status').expectOne());
             }
         });
     });
+}
+
+exports.setup_page = function () {
+    i18n.ensure_i18n(_setup_page);
 };
 
 return exports;

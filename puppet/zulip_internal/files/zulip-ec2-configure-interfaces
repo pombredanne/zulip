@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # Copyright © 2013 Zulip, Inc.
@@ -42,14 +42,20 @@ interfaces.
 
 '''
 
+from __future__ import absolute_import
 import sys
 import logging
 import logging.handlers
 import subprocess
 import re
 
+import sys
+sys.path.append('/home/zulip/deployments/current')
+import scripts.lib.setup_path_on_import
+
 import boto.utils
 import netifaces
+from six.moves import range
 
 def address_of(device_id):
     try:
@@ -70,7 +76,7 @@ log.addHandler(logging.handlers.SysLogHandler(facility=logging.handlers.SysLogHa
 log.addHandler(logging.StreamHandler())
 log.info("Starting.")
 
-macs = boto.utils.get_instance_metadata()["network"]["interfaces"]["macs"]
+macs = boto.utils.get_instance_metadata()["network"]["interfaces"]["macs"] # type: ignore # boto.utils has no stubs
 ids = [int(macdata['device-number']) for macdata in macs.values()]
 ifaces = [iface for iface in netifaces.interfaces() if ":" not in iface and iface != "lo"]
 
@@ -84,7 +90,7 @@ for device in macs.values():
     #   If you have multiple IPs, local-ipv4s is a list.
     #   If you only have one, local-ipv4s is a string.
     # Who knew?
-    if type(device['local-ipv4s']) is str:
+    if isinstance(device['local-ipv4s'], str):
         # Only do dhcp, don't try to assign addresses
         to_configure = [device['local-ipv4s']]
     else:
@@ -93,7 +99,7 @@ for device in macs.values():
 
     if address_of(device_number) is None:
         # If the device was not autoconfigured, do so now.
-        log.info("Device eth%i not configured, starting dhcpd" % device_number)
+        log.info("Device eth%i not configured, starting dhcpd" % (device_number,))
         subprocess.check_call(['/sbin/dhcpcd', 'eth%i' % device_number])
 
         # Horrible hack to route return packets on the correct interface

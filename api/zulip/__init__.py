@@ -22,31 +22,32 @@
 
 from __future__ import print_function
 from __future__ import absolute_import
+from __future__ import division
 import simplejson
 import requests
 import time
 import traceback
-import urlparse
 import sys
 import os
 import optparse
 import platform
-import urllib
 import random
 from distutils.version import LooseVersion
 
 from six.moves.configparser import SafeConfigParser
+from six.moves import urllib
 import logging
 import six
+from typing import Any, Dict
 
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 
 logger = logging.getLogger(__name__)
 
 # Check that we have a recent enough version
 # Older versions don't provide the 'json' attribute on responses.
-assert(LooseVersion(requests.__version__) >= LooseVersion('0.12.1'))
+assert(LooseVersion(requests.__version__) >= LooseVersion('0.12.1')) # type: ignore # https://github.com/python/mypy/issues/1165 and https://github.com/python/typeshed/pull/206
 # In newer versions, the 'json' attribute is a function, not a property
 requests_json_is_function = callable(requests.Response.json)
 
@@ -133,6 +134,17 @@ def generate_option_group(parser, prefix=''):
                           CA certificates. This will be used to
                           verify the server's identity. All
                           certificates should be PEM encoded.''')
+    group.add_option('--client-cert',
+                     action='store',
+                     dest='client_cert',
+                     help='''Specify a file containing a client
+                          certificate (not needed for most deployments).''')
+    group.add_option('--client-cert-key',
+                     action='store',
+                     dest='client_cert_key',
+                     help='''Specify a file containing the client
+                          certificate's key (if it is in a separate
+                          file).''')
     return group
 
 def init_from_options(options, client=None):
@@ -143,20 +155,24 @@ def init_from_options(options, client=None):
     return Client(email=options.zulip_email, api_key=options.zulip_api_key,
                   config_file=options.zulip_config_file, verbose=options.verbose,
                   site=options.zulip_site, client=client,
-                  cert_bundle=options.cert_bundle, insecure=options.insecure)
+                  cert_bundle=options.cert_bundle, insecure=options.insecure,
+                  client_cert=options.client_cert,
+                  client_cert_key=options.client_cert_key)
 
 def get_default_config_filename():
     config_file = os.path.join(os.environ["HOME"], ".zuliprc")
     if (not os.path.exists(config_file) and
         os.path.exists(os.path.join(os.environ["HOME"], ".humbugrc"))):
-        raise RuntimeError("The Zulip API configuration file is now ~/.zuliprc; please run:\n\n  mv ~/.humbugrc ~/.zuliprc\n")
+        raise RuntimeError("The Zulip API configuration file is now ~/.zuliprc; please run:\n\n"
+                           "  mv ~/.humbugrc ~/.zuliprc\n")
     return config_file
 
 class Client(object):
     def __init__(self, email=None, api_key=None, config_file=None,
                  verbose=False, retry_on_errors=True,
                  site=None, client=None,
-                 cert_bundle=None, insecure=None):
+                 cert_bundle=None, insecure=None,
+                 client_cert=None, client_cert_key=None):
         if client is None:
             client = _default_client()
 
@@ -164,7 +180,7 @@ class Client(object):
             config_file = get_default_config_filename()
         if os.path.exists(config_file):
             config = SafeConfigParser()
-            with file(config_file, 'r') as f:
+            with open(config_file, 'r') as f:
                 config.readfp(f, config_file)
             if api_key is None:
                 api_key = config.get("api", "key")
@@ -172,6 +188,10 @@ class Client(object):
                 email = config.get("api", "email")
             if site is None and config.has_option("api", "site"):
                 site = config.get("api", "site")
+            if client_cert is None and config.has_option("api", "client_cert"):
+                client_cert = config.get("api", "client_cert")
+            if client_cert_key is None and config.has_option("api", "client_cert_key"):
+                client_cert_key = config.get("api", "client_cert_key")
             if cert_bundle is None and config.has_option("api", "cert_bundle"):
                 cert_bundle = config.get("api", "cert_bundle")
             if insecure is None and config.has_option("api", "insecure"):
@@ -218,6 +238,21 @@ class Client(object):
             # Default behavior: verify against system CA certificates
             self.tls_verification=True
 
+        if client_cert is None:
+            if client_cert_key is not None:
+                raise RuntimeError("client cert key '%s' specified, but no client cert public part provided"
+                                   %(client_cert_key,))
+        else: # we have a client cert
+            if not os.path.isfile(client_cert):
+                raise RuntimeError("client cert '%s' does not exist"
+                                   %(client_cert,))
+            if client_cert_key is not None:
+                if not os.path.isfile(client_cert_key):
+                    raise RuntimeError("client cert key '%s' does not exist"
+                                       %(client_cert_key,))
+        self.client_cert = client_cert
+        self.client_cert_key = client_cert_key
+
     def get_user_agent(self):
         vendor = ''
         vendor_version = ''
@@ -245,17 +280,17 @@ class Client(object):
     def do_api_query(self, orig_request, url, method="POST", longpolling = False):
         request = {}
 
-        for (key, val) in orig_request.iteritems():
-            if not (isinstance(val, str) or isinstance(val, six.text_type)):
-                request[key] = simplejson.dumps(val)
-            else:
+        for (key, val) in six.iteritems(orig_request):
+            if isinstance(val, str) or isinstance(val, six.text_type):
                 request[key] = val
+            else:
+                request[key] = simplejson.dumps(val)
 
         query_state = {
             'had_error_retry': False,
             'request': request,
             'failures': 0,
-        }
+        } # type: Dict[str, Any]
 
         def error_retry(error_string):
             if not self.retry_on_errors or query_state["failures"] >= 10:
@@ -287,12 +322,21 @@ class Client(object):
                 else:
                     kwarg = "data"
                 kwargs = {kwarg: query_state["request"]}
+
+                # Build a client cert object for requests
+                if self.client_cert_key is not None:
+                    client_cert = (self.client_cert, self.client_cert_key)
+                else:
+                    client_cert = self.client_cert
+
                 res = requests.request(
                         method,
-                        urlparse.urljoin(self.base_url, url),
+                        urllib.parse.urljoin(self.base_url, url),
                         auth=requests.auth.HTTPBasicAuth(self.email,
                                                          self.api_key),
-                        verify=self.tls_verification, timeout=90,
+                        verify=self.tls_verification,
+                        cert=client_cert,
+                        timeout=90,
                         headers={"User-agent": self.get_user_agent()},
                         **kwargs)
 
@@ -343,10 +387,15 @@ class Client(object):
                     "status_code": res.status_code}
 
     @classmethod
-    def _register(cls, name, url=None, make_request=(lambda request={}: request),
+    def _register(cls, name, url=None, make_request=None,
                   method="POST", computed_url=None, **query_kwargs):
         if url is None:
             url = name
+        if make_request is None:
+            def make_request(request=None):
+                if request is None:
+                    request = {}
+                return request
         def call(self, *args, **kwargs):
             request = make_request(*args, **kwargs)
             if computed_url is not None:
@@ -357,7 +406,9 @@ class Client(object):
         call.__name__ = name
         setattr(cls, name, call)
 
-    def call_on_each_event(self, callback, event_types=None, narrow=[]):
+    def call_on_each_event(self, callback, event_types=None, narrow=None):
+        if narrow is None:
+            narrow = []
         def do_register():
             while True:
                 if event_types is None:
@@ -425,9 +476,11 @@ def _mk_rm_subs(streams):
 def _mk_deregister(queue_id):
     return {'queue_id': queue_id}
 
-def _mk_events(event_types=None, narrow=[]):
+def _mk_events(event_types=None, narrow=None):
     if event_types is None:
         return dict()
+    if narrow is None:
+        narrow = []
     return dict(event_types=event_types, narrow=narrow)
 
 def _kwargs_to_dict(**kwargs):
@@ -468,7 +521,7 @@ Client._register('list_subscriptions', method='GET', url='users/me/subscriptions
 Client._register('add_subscriptions', url='users/me/subscriptions', make_request=_mk_subs)
 Client._register('remove_subscriptions', method='PATCH', url='users/me/subscriptions', make_request=_mk_rm_subs)
 Client._register('get_subscribers', method='GET',
-                 computed_url=lambda request: 'streams/%s/members' % (urllib.quote(request['stream'], safe=''),),
+                 computed_url=lambda request: 'streams/%s/members' % (urllib.parse.quote(request['stream'], safe=''),),
                  make_request=_kwargs_to_dict)
 Client._register('render_message', method='GET', url='messages/render')
 Client._register('create_user', method='POST', url='users')

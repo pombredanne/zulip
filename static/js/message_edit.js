@@ -3,8 +3,8 @@ var exports = {};
 var currently_editing_messages = {};
 
 
-//returns true if the edit task should end.
-exports.save = function (row) {
+// Returns true if the edit task should end.
+exports.save = function (row, from_topic_edited_only) {
     var msg_list = current_msg_list;
     var message_id;
 
@@ -45,8 +45,9 @@ exports.save = function (row) {
         changed = true;
     }
 
-    if (new_content !== message.raw_content) {
+    if (new_content !== message.raw_content && !from_topic_edited_only) {
         request.content = new_content;
+        message.is_me_message = new_content.lastIndexOf('/me', 0) === 0;
         changed = true;
     }
     if (!changed) {
@@ -69,20 +70,31 @@ exports.save = function (row) {
     // The message will automatically get replaced when it arrives.
 };
 
-function handle_edit_keydown(e) {
+function handle_edit_keydown(from_topic_edited_only, e) {
     var row, code = e.keyCode || e.which;
 
     if (e.target.id === "message_edit_content" && code === 13 &&
         (e.metaKey || e.ctrlKey)) {
         row = $(".message_edit_content").filter(":focus").closest(".message_row");
-        if (message_edit.save(row) === true) {
+        if (message_edit.save(row, from_topic_edited_only) === true) {
             message_edit.end(row);
         }
     } else if (e.target.id === "message_edit_topic" && code === 13) {
-        //hitting enter in topic field isn't so great.
+        // Hitting enter in topic field isn't so great.
         e.stopPropagation();
         e.preventDefault();
     }
+}
+
+function timer_text(seconds_left) {
+    var minutes = Math.floor(seconds_left / 60);
+    var seconds = seconds_left % 60;
+    if (minutes >= 1) {
+        return i18n.t("__minutes__ min to edit", {'minutes': minutes.toString()});
+    } else if (seconds_left >= 10) {
+        return i18n.t("__seconds__ sec to edit", {'seconds': (seconds - seconds % 5).toString()});
+    }
+    return i18n.t("__seconds__ sec to edit", {'seconds': seconds.toString()});
 }
 
 function edit_message (row, raw_content) {
@@ -94,17 +106,79 @@ function edit_message (row, raw_content) {
     var form = $(templates.render('message_edit_form',
                                   {is_stream: message.is_stream,
                                    topic: message.subject,
-                                   content: raw_content}));
+                                   content: raw_content,
+                                   minutes_to_edit: Math.floor(page_params.realm_message_content_edit_limit_seconds / 60)}));
 
     var edit_obj = {form: form, raw_content: raw_content};
     var original_topic = message.subject;
 
     current_msg_list.show_edit_message(row, edit_obj);
 
-    form.keydown(handle_edit_keydown);
+    form.keydown(_.partial(handle_edit_keydown, false));
+
+    // We potentially got to this function by clicking a button that implied the
+    // user would be able to edit their message.  Give a little bit of buffer in
+    // case the button has been around for a bit, e.g. we show the
+    // edit_content_button (hovering pencil icon) as long as the user would have
+    // been able to click it at the time the mouse entered the message_row. Also
+    // a buffer in case their computer is slow, or stalled for a second, etc
+    // If you change this number also change edit_limit_buffer in
+    // zerver.views.messages.update_message_backend
+    var seconds_left_buffer = 5;
+
+    var now = new XDate();
+    var seconds_left = page_params.realm_message_content_edit_limit_seconds +
+        now.diffSeconds(message.timestamp * 1000);
+    var can_edit_content = (page_params.realm_message_content_edit_limit_seconds === 0) ||
+        (seconds_left + seconds_left_buffer > 0);
+    if (!can_edit_content) {
+        row.find('textarea.message_edit_content').attr("disabled","disabled");
+    }
+
+    // If we allow editing at all, give them at least 10 seconds to do it.
+    // If you change this number also change edit_limit_buffer in
+    // zerver.views.messages.update_message_backend
+    var min_seconds_to_edit = 10;
+    seconds_left = Math.floor(Math.max(seconds_left, min_seconds_to_edit));
+
+    // Add a visual timer if appropriate
+    if (can_edit_content && page_params.realm_message_content_edit_limit_seconds > 0) {
+        row.find('.message-edit-timer-control-group').show();
+        $('#message_edit_tooltip').tooltip({ animation: false, placement: 'left',
+                                             template: '<div class="tooltip" role="tooltip"><div class="tooltip-arrow"></div><div class="tooltip-inner message-edit-tooltip-inner"></div></div>'});
+        // I believe these need to be defined outside the countdown_timer, since
+        // row just refers to something like the currently selected message, and
+        // can change out from under us
+        var message_content_row = row.find('textarea.message_edit_content');
+        var message_topic_row, message_topic_propagate_row;
+        if (message.is_stream) {
+            message_topic_row = row.find('input.message_edit_topic');
+            message_topic_propagate_row = row.find('select.message_edit_topic_propagate');
+        }
+        var message_save_row = row.find('button.message_edit_save');
+        var timer_row = row.find('.message_edit_countdown_timer');
+        // Do this right away, rather than waiting for the timer to do its first update,
+        // since otherwise there is a noticeable lag
+        timer_row.text(timer_text(seconds_left));
+        var countdown_timer = setInterval(function () {
+            if (--seconds_left <= 0) {
+                clearInterval(countdown_timer);
+                message_content_row.attr("disabled","disabled");
+                if (message.is_stream) {
+                    message_topic_row.attr("disabled","disabled");
+                    message_topic_propagate_row.hide();
+                }
+                message_save_row.addClass("disabled");
+                timer_row.text(i18n.t("Time's up!"));
+            } else {
+                timer_row.text(timer_text(seconds_left));
+            }
+        }, 1000);
+    }
 
     currently_editing_messages[message.id] = edit_obj;
-    if (message.type === 'stream' && message.subject === compose.empty_subject_placeholder()) {
+    if ((message.type === 'stream' && message.subject === compose.empty_subject_placeholder()) ||
+        !can_edit_content) {
         edit_row.find(".message_edit_topic").focus();
     } else {
         edit_row.find(".message_edit_content").focus();
@@ -127,6 +201,7 @@ function edit_message (row, raw_content) {
     }
 
     composebox_typeahead.initialize_compose_typeahead("#message_edit_content", {emoji: true});
+
 }
 
 function start_edit_maintaining_scroll(row, content) {
@@ -161,7 +236,7 @@ exports.start_local_failed_edit = function (row, message) {
 exports.start_topic_edit = function (recipient_row) {
     var form = $(templates.render('topic_edit_form'));
     current_msg_list.show_edit_topic(recipient_row, form);
-    form.keydown(handle_edit_keydown);
+    form.keydown(_.partial(handle_edit_keydown, true));
     var msg_id = rows.id_for_recipient_row(recipient_row);
     var message = current_msg_list.get(msg_id);
     var topic = message.subject;
@@ -187,7 +262,7 @@ exports.end = function (row) {
 };
 
 exports.maybe_show_edit = function (row, id) {
-    if (currently_editing_messages[id] !== undefined){
+    if (currently_editing_messages[id] !== undefined) {
         current_msg_list.show_edit_message(row, currently_editing_messages[id]);
     }
 };

@@ -1,6 +1,8 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+from typing import Any, Callable, Optional
+
 from zerver.models import get_user_profile_by_id
 from zerver.lib.rate_limiter import client, max_api_calls, max_api_window
 
@@ -23,7 +25,8 @@ class Command(BaseCommand):
                     help="Actually trim excess"),
         )
 
-    def _check_within_range(self, key, count_func, trim_func):
+    def _check_within_range(self, key, count_func, trim_func=None):
+        # type: ignore # mypy #1567 should be (str, Callable[[], int], Optional[Callable[[str, int], None]]) -> None
         user_id = int(key.split(':')[1])
         try:
             user = get_user_profile_by_id(user_id)
@@ -39,11 +42,12 @@ class Command(BaseCommand):
         if count > max_calls:
             logging.error("Redis health check found key with more elements \
 than max_api_calls! (trying to trim) %s %s" % (key, count))
-            if self.trim:
+            if trim_func is not None:
                 client.expire(key, max_api_window(user=user))
                 trim_func(key, max_calls)
 
     def handle(self, *args, **options):
+        # type: (*Any, **Any) -> None
         if not settings.RATE_LIMITING:
             print("This machine is not using redis or rate limiting, aborting")
             exit(1)
@@ -52,13 +56,15 @@ than max_api_calls! (trying to trim) %s %s" % (key, count))
         wildcard_list = "ratelimit:*:*:list"
         wildcard_zset = "ratelimit:*:*:zset"
 
-        self.trim = options['trim']
+        trim_func = lambda key, max_calls: client.ltrim(key, 0, max_calls - 1)
+        if not options['trim']:
+            trim_func = None
 
         lists = client.keys(wildcard_list)
         for list_name in lists:
             self._check_within_range(list_name,
                                      lambda: client.llen(list_name),
-                                     lambda key, max_calls: client.ltrim(key, 0, max_calls - 1))
+                                     trim_func)
 
         zsets = client.keys(wildcard_zset)
         for zset in zsets:

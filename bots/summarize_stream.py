@@ -1,4 +1,5 @@
 from __future__ import print_function
+from typing import Any, Dict, List
 # This is hacky code to analyze data on our support stream.  The main
 # reusable bits are get_recent_messages and get_words.
 
@@ -50,13 +51,13 @@ def generate_support_stats():
     narrow = 'stream:support'
     count = 2000
     msgs = get_recent_messages(client, narrow, count)
-    msgs_by_topic = collections.defaultdict(list)
+    msgs_by_topic = collections.defaultdict(list) # type: Dict[str, List[Dict[str, Any]]]
     for msg in msgs:
         topic = msg['subject']
         msgs_by_topic[topic].append(msg)
 
-    word_count = collections.defaultdict(int)
-    email_count = collections.defaultdict(int)
+    word_count = collections.defaultdict(int) # type: Dict[str, int]
+    email_count = collections.defaultdict(int) # type: Dict[str, int]
 
     if False:
         for topic in msgs_by_topic:
@@ -64,16 +65,14 @@ def generate_support_stats():
     analyze_messages(msgs, word_count, email_count)
 
     if True:
-        words = word_count.keys()
-        words = [w for w in words if word_count[w] >= 10]
-        words = [w for w in words if len(w) >= 5]
+        words = [w for w in word_count.keys() if word_count[w] >= 10 and len(w) >= 5]
         words = sorted(words, key=lambda w: word_count[w], reverse=True)
         for word in words:
             print(word, word_count[word])
 
     if False:
-        emails = email_count.keys()
-        emails = sorted(emails, key=lambda w: email_count[w], reverse=True)
+        emails = sorted(list(email_count.keys()),
+                        key=lambda w: email_count[w], reverse=True)
         for email in emails:
             print(email, email_count[email])
 

@@ -11,7 +11,7 @@ var exports = {};
 
     function add_sub(stream_name, $status_message) {
         channel.post({
-            url: '/json/subscriptions/add',
+            url: '/json/users/me/subscriptions',
             data: {
                 subscriptions: JSON.stringify([{'name': stream_name}])
             }
@@ -20,11 +20,11 @@ var exports = {};
                 if (!$.isEmptyObject(data.already_subscribed)) {
                     // Display the canonical stream capitalization.
                     var true_stream_name = data.already_subscribed[page_params.email][0];
-                    ui.report_success("Already subscribed to " + true_stream_name,
+                    ui.report_success(i18n.t("Already subscribed to __stream__", {'stream': true_stream_name}),
                                       $status_message);
                 }
             }, function (xhr) {
-                ui.report_error("Error adding subscription", xhr, $status_message);
+                ui.report_error(i18n.t("Error adding subscription"), xhr, $status_message);
             }
         );
     }
@@ -39,19 +39,19 @@ var exports = {};
             function (data) {
                 $status_message.hide();
             }, function (xhr) {
-                ui.report_error("Error removing subscription", xhr, $status_message);
+                ui.report_error(i18n.t("Error removing subscription"), xhr, $status_message);
             }
         );
     }
 
     function display_subscribe($button, stream_name) {
-        $button.text('Subscribe to ' + stream_data.canonicalized_name(stream_name))
+        $button.text(i18n.t('Subscribe to') + ' ' + stream_data.canonicalized_name(stream_name))
             .removeClass('btn-success')
             .addClass('btn-default');
     }
 
     function display_unsubscribe($button, stream_name) {
-        $button.text('Unsubscribe from ' + stream_data.canonicalized_name(stream_name))
+        $button.text(i18n.t('Unsubscribe from') + ' ' + stream_data.canonicalized_name(stream_name))
             .removeClass('btn-default')
             .addClass('btn-success');
     }

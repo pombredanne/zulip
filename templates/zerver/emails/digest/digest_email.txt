@@ -1,7 +1,6 @@
-{% load app_filters %}
-{% comment %}
+{#
 Mail sent to a user who hasn't logged in for 24 hours.
-{% endcomment %}
+#}
 
 Hello {{ name }},
 
@@ -18,7 +17,7 @@ You have some missed private messages. Here are some of them:
 {% for message_block in sender_block.content %}{{ message_block.plain }}
 {% endfor %}
 {% endfor %}{% endfor %}
-{% if remaining_unread_pm_count > 0 %}+ {{ remaining_unread_pm_count }} more new private message{{ remaining_unread_pm_count|pluralize }}{% endif %}
+{% if remaining_unread_pms_count > 0 %}+ {{ remaining_unread_pms_count }} more new private message{{ remaining_unread_pms_count|pluralize }}{% endif %}
 Catch up on the rest of your PMs: https://{{ external_host }}/#narrow/is/private{% endif %}
 
 {% if hot_conversations %}
@@ -32,20 +31,20 @@ been gone:
 {% endif %}
 {% for message_block in sender_block.content %}{{ message_block.plain }}
 {% endfor %}{% endfor %}
-{% if convo.count > 0 %}+ {{ convo.count }} more message{{ convo.count|pluralize }} by {{ convo.participants|display_list:4 }}.{% endif %}
+{% if convo.count > 0 %}+ {{ convo.count }} more message{{ convo.count|pluralize }} by {{ convo.participants|display_list(4) }}.{% endif %}
 {% endfor %}{% endfor %}
 Catch up on the rest of these conversations: https://{{ external_host }}.{% endif %}
 
 
 {% if new_users and new_streams.plain %}** Group updates **{% elif new_users %}** New users **{% elif new_streams.plain %}** New streams **{% endif %}
 
-{% if new_streams.plain %}{% if new_stream_count > 1 %}A new stream was{% else %}Some new streams were{% endif %} created:
+{% if new_streams.plain %}{% if new_stream_count and new_stream_count > 1 %}A new stream was{% else %}Some new streams were{% endif %} created:
 
-    {{ new_streams.plain|display_list:4 }}.
+    {{ new_streams.plain|display_list(4) }}.
 
 Visit your Streams page to subscribe: https://{{ external_host }}/#subscriptions.{% endif %}
 
-{% if new_users %}{% if new_streams.plain or unread_pms or hot_conversations %}And finally, please{% else %}Please{% endif %} welcome {{ new_users|display_list:4 }} to Zulip!{% endif %}
+{% if new_users %}{% if new_streams.plain or unread_pms or hot_conversations %}And finally, please{% else %}Please{% endif %} welcome {{ new_users|display_list(4) }} to Zulip!{% endif %}
 
 Click here to log in to Zulip and catch up: https://{{ external_host }}.
 

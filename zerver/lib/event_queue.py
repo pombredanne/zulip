@@ -1,5 +1,7 @@
 from __future__ import absolute_import
+from typing import cast, AbstractSet, Any, Optional, Iterable, Sequence, Mapping, MutableMapping, Callable, Union
 
+from django.utils.translation import ugettext as _
 from django.conf import settings
 from django.utils.timezone import now
 from collections import deque
@@ -10,23 +12,28 @@ import socket
 import logging
 import ujson
 import requests
-import six.moves.cPickle as pickle
 import atexit
 import sys
 import signal
 import tornado
+import tornado.autoreload
 import random
 import traceback
-from zerver.lib.cache import cache_get_many, message_cache_key, \
-    user_profile_by_id_cache_key, cache_save_user_profile
-from zerver.lib.cache_helpers import cache_with_key
+from zerver.models import UserProfile, Client
+from zerver.decorator import RespondAsynchronously
+from zerver.lib.cache import cache_get_many, \
+    user_profile_by_id_cache_key, cache_save_user_profile, cache_with_key
+from zerver.lib.handlers import clear_handler_by_id, get_handler_by_id, \
+    finish_handler, handler_stats_string
 from zerver.lib.utils import statsd
 from zerver.middleware import async_request_restart
-from zerver.models import get_client, Message
 from zerver.lib.narrow import build_narrow_filter
 from zerver.lib.queue import queue_json_publish
+from zerver.lib.request import JsonableError
 from zerver.lib.timestamp import timestamp_to_datetime
 import copy
+import six
+from six import text_type
 
 # The idle timeout used to be a week, but we found that in that
 # situation, queues from dead browser sessions would grow quite large
@@ -46,24 +53,27 @@ MAX_QUEUE_TIMEOUT_SECS = 7 * 24 * 60 * 60
 HEARTBEAT_MIN_FREQ_SECS = 45
 
 class ClientDescriptor(object):
-    def __init__(self, user_profile_id, realm_id, event_queue, event_types, client_type,
-                 apply_markdown=True, all_public_streams=False, lifespan_secs=0,
-                 narrow=[]):
+    def __init__(self, user_profile_id, user_profile_email, realm_id, event_queue,
+                 event_types, client_type_name, apply_markdown=True,
+                 all_public_streams=False, lifespan_secs=0, narrow=[]):
+        # type: (int, text_type, int, EventQueue, Optional[Sequence[str]], text_type, bool, bool, int, Iterable[Sequence[text_type]]) -> None
         # These objects are serialized on shutdown and restored on restart.
         # If fields are added or semantics are changed, temporary code must be
         # added to load_event_queues() to update the restored objects.
         # Additionally, the to_dict and from_dict methods must be updated
         self.user_profile_id = user_profile_id
+        self.user_profile_email = user_profile_email
         self.realm_id = realm_id
-        self.current_handler = None
+        self.current_handler_id = None # type: Optional[int]
+        self.current_client_name = None # type: Optional[text_type]
         self.event_queue = event_queue
         self.queue_timeout = lifespan_secs
         self.event_types = event_types
         self.last_connection_time = time.time()
         self.apply_markdown = apply_markdown
         self.all_public_streams = all_public_streams
-        self.client_type = client_type
-        self._timeout_handle = None
+        self.client_type_name = client_type_name
+        self._timeout_handle = None # type: Any # TODO: should be return type of ioloop.add_timeout
         self.narrow = narrow
         self.narrow_filter = build_narrow_filter(narrow)
 
@@ -71,10 +81,12 @@ class ClientDescriptor(object):
         self.queue_timeout = max(IDLE_EVENT_QUEUE_TIMEOUT_SECS, min(self.queue_timeout, MAX_QUEUE_TIMEOUT_SECS))
 
     def to_dict(self):
+        # type: () -> Dict[str, Any]
         # If you add a new key to this dict, make sure you add appropriate
         # migration code in from_dict or load_event_queues to account for
         # loading event queues that lack that key.
         return dict(user_profile_id=self.user_profile_id,
+                    user_profile_email=self.user_profile_email,
                     realm_id=self.realm_id,
                     event_queue=self.event_queue.to_dict(),
                     queue_timeout=self.queue_timeout,
@@ -83,56 +95,59 @@ class ClientDescriptor(object):
                     apply_markdown=self.apply_markdown,
                     all_public_streams=self.all_public_streams,
                     narrow=self.narrow,
-                    client_type=self.client_type.name)
+                    client_type_name=self.client_type_name)
+
+    def __repr__(self):
+        # type: () -> str
+        return "ClientDescriptor<%s>" % (self.event_queue.id,)
 
     @classmethod
     def from_dict(cls, d):
-        ret = cls(d['user_profile_id'], d['realm_id'],
+        # type: (MutableMapping[str, Any]) -> ClientDescriptor
+        if 'user_profile_email' not in d:
+            # Temporary migration for the addition of the new user_profile_email field
+            from zerver.models import get_user_profile_by_id
+            d['user_profile_email'] = get_user_profile_by_id(d['user_profile_id']).email
+        if 'client_type' in d:
+            # Temporary migration for the rename of client_type to client_type_name
+            d['client_type_name'] = d['client_type']
+        ret = cls(d['user_profile_id'], d['user_profile_email'], d['realm_id'],
                   EventQueue.from_dict(d['event_queue']), d['event_types'],
-                  get_client(d['client_type']), d['apply_markdown'], d['all_public_streams'],
+                  d['client_type_name'], d['apply_markdown'], d['all_public_streams'],
                   d['queue_timeout'], d.get('narrow', []))
         ret.last_connection_time = d['last_connection_time']
         return ret
 
     def prepare_for_pickling(self):
-        self.current_handler = None
+        # type: () -> None
+        self.current_handler_id = None
         self._timeout_handle = None
 
     def add_event(self, event):
-        if self.current_handler is not None:
-            async_request_restart(self.current_handler._request)
+        # type: (Dict[str, Any]) -> None
+        if self.current_handler_id is not None:
+            handler = get_handler_by_id(self.current_handler_id)
+            async_request_restart(handler._request)
 
         self.event_queue.push(event)
         self.finish_current_handler()
 
-    def finish_current_handler(self):
-        if self.current_handler is not None:
+    def finish_current_handler(self, need_timeout=False):
+        # type: (bool) -> bool
+        if self.current_handler_id is not None:
             err_msg = "Got error finishing handler for queue %s" % (self.event_queue.id,)
             try:
-                # We call async_request_restart here in case we are
-                # being finished without any events (because another
-                # get_events request has supplanted this request)
-                async_request_restart(self.current_handler._request)
-                self.current_handler._request._log_data['extra'] = "[%s/1]" % (self.event_queue.id,)
-                self.current_handler.zulip_finish(dict(result='success', msg='',
-                                                       events=self.event_queue.contents(),
-                                                       queue_id=self.event_queue.id),
-                                                  self.current_handler._request,
-                                                  apply_markdown=self.apply_markdown)
-            except IOError as e:
-                if e.message != 'Stream is closed':
-                    logging.exception(err_msg)
-            except AssertionError as e:
-                if e.message != 'Request closed':
-                    logging.exception(err_msg)
+                finish_handler(self.current_handler_id, self.event_queue.id,
+                               self.event_queue.contents(), self.apply_markdown)
             except Exception:
                 logging.exception(err_msg)
             finally:
-                self.disconnect_handler()
+                self.disconnect_handler(need_timeout=need_timeout)
                 return True
         return False
 
     def accepts_event(self, event):
+        # type: (Mapping[str, Any]) -> bool
         if self.event_types is not None and event["type"] not in self.event_types:
             return False
         if event["type"] == "message":
@@ -141,46 +156,77 @@ class ClientDescriptor(object):
 
     # TODO: Refactor so we don't need this function
     def accepts_messages(self):
+        # type: () -> bool
         return self.event_types is None or "message" in self.event_types
 
     def idle(self, now):
+        # type: (float) -> bool
         if not hasattr(self, 'queue_timeout'):
             self.queue_timeout = IDLE_EVENT_QUEUE_TIMEOUT_SECS
 
-        return (self.current_handler is None
+        return (self.current_handler_id is None
                 and now - self.last_connection_time >= self.queue_timeout)
 
-    def connect_handler(self, handler):
-        self.current_handler = handler
-        handler.client_descriptor = self
+    def connect_handler(self, handler_id, client_name):
+        # type: (int, text_type) -> None
+        self.current_handler_id = handler_id
+        self.current_client_name = client_name
+        set_descriptor_by_handler_id(handler_id, self)
         self.last_connection_time = time.time()
         def timeout_callback():
+            # type: () -> None
             self._timeout_handle = None
             # All clients get heartbeat events
             self.add_event(dict(type='heartbeat'))
         ioloop = tornado.ioloop.IOLoop.instance()
         heartbeat_time = time.time() + HEARTBEAT_MIN_FREQ_SECS + random.randint(0, 10)
-        if self.client_type.name != 'API: heartbeat test':
+        if self.client_type_name != 'API: heartbeat test':
             self._timeout_handle = ioloop.add_timeout(heartbeat_time, timeout_callback)
 
-    def disconnect_handler(self, client_closed=False):
-        if self.current_handler:
-            self.current_handler.client_descriptor = None
+    def disconnect_handler(self, client_closed=False, need_timeout=True):
+        # type: (bool, bool) -> None
+        if self.current_handler_id:
+            clear_descriptor_by_handler_id(self.current_handler_id, None)
+            clear_handler_by_id(self.current_handler_id)
             if client_closed:
-                request = self.current_handler._request
-                logging.info("Client disconnected for queue %s (%s via %s)" % \
-                                 (self.event_queue.id, request._email, request.client.name))
-        self.current_handler = None
-        if self._timeout_handle is not None:
+                logging.info("Client disconnected for queue %s (%s via %s)" %
+                             (self.event_queue.id, self.user_profile_email,
+                              self.current_client_name))
+        self.current_handler_id = None
+        self.current_client_name = None
+        if need_timeout and self._timeout_handle is not None:
             ioloop = tornado.ioloop.IOLoop.instance()
             ioloop.remove_timeout(self._timeout_handle)
             self._timeout_handle = None
 
     def cleanup(self):
-        do_gc_event_queues([self.event_queue.id], [self.user_profile_id],
-                           [self.realm_id])
+        # type: () -> None
+        # Before we can GC the event queue, we need to disconnect the
+        # handler and notify the client (or connection server) so that
+        # they can cleanup their own state related to the GC'd event
+        # queue.  Finishing the handler before we GC ensures the
+        # invariant that event queues are idle when passed to
+        # `do_gc_event_queues` is preserved.
+        self.finish_current_handler(need_timeout=False)
+        do_gc_event_queues({self.event_queue.id}, {self.user_profile_id},
+                           {self.realm_id})
+
+descriptors_by_handler_id = {} # type: Dict[int, ClientDescriptor]
+
+def get_descriptor_by_handler_id(handler_id):
+    # type: (int) -> ClientDescriptor
+    return descriptors_by_handler_id.get(handler_id)
+
+def set_descriptor_by_handler_id(handler_id, client_descriptor):
+    # type: (int, ClientDescriptor) -> None
+    descriptors_by_handler_id[handler_id] = client_descriptor
+
+def clear_descriptor_by_handler_id(handler_id, client_descriptor):
+    # type: (int, Optional[ClientDescriptor]) -> None
+    del descriptors_by_handler_id[handler_id]
 
 def compute_full_event_type(event):
+    # type: (Mapping[str, Any]) -> str
     if event["type"] == "update_message_flags":
         if event["all"]:
             # Put the "all" case in its own category
@@ -190,12 +236,14 @@ def compute_full_event_type(event):
 
 class EventQueue(object):
     def __init__(self, id):
-        self.queue = deque()
-        self.next_event_id = 0
-        self.id = id
-        self.virtual_events = {}
+        # type: (str) -> None
+        self.queue = deque() # type: deque[Dict[str, Any]]
+        self.next_event_id = 0 # type: int
+        self.id = id # type: str
+        self.virtual_events = {} # type: Dict[str, Dict[str, Any]]
 
     def to_dict(self):
+        # type: () -> Dict[str, Any]
         # If you add a new key to this dict, make sure you add appropriate
         # migration code in from_dict or load_event_queues to account for
         # loading event queues that lack that key.
@@ -206,6 +254,7 @@ class EventQueue(object):
 
     @classmethod
     def from_dict(cls, d):
+        # type: (Dict[str, Any]) -> EventQueue
         ret = cls(d['id'])
         ret.next_event_id = d['next_event_id']
         ret.queue = deque(d['queue'])
@@ -213,6 +262,7 @@ class EventQueue(object):
         return ret
 
     def push(self, event):
+        # type: (Dict[str, Any]) -> None
         event['id'] = self.next_event_id
         self.next_event_id += 1
         full_event_type = compute_full_event_type(event)
@@ -239,19 +289,23 @@ class EventQueue(object):
     # current usage since virtual events should always be resolved to
     # a real event before being given to users.
     def pop(self):
+        # type: () -> Dict[str, Any]
         return self.queue.popleft()
 
     def empty(self):
+        # type: () -> bool
         return len(self.queue) == 0 and len(self.virtual_events) == 0
 
     # See the comment on pop; that applies here as well
     def prune(self, through_id):
+        # type: (int) -> None
         while len(self.queue) != 0 and self.queue[0]['id'] <= through_id:
             self.pop()
 
     def contents(self):
-        contents = []
-        virtual_id_map = {}
+        # type: () -> List[Dict[str, Any]]
+        contents = [] # type: List[Dict[str, Any]]
+        virtual_id_map = {} # type: Dict[str, Dict[str, Any]]
         for event_type in self.virtual_events:
             virtual_id_map[self.virtual_events[event_type]["id"]] = self.virtual_events[event_type]
         virtual_ids = sorted(list(virtual_id_map.keys()))
@@ -273,52 +327,58 @@ class EventQueue(object):
         return contents
 
 # maps queue ids to client descriptors
-clients = {}
+clients = {} # type: Dict[str, ClientDescriptor]
 # maps user id to list of client descriptors
-user_clients = {}
+user_clients = {} # type: Dict[int, List[ClientDescriptor]]
 # maps realm id to list of client descriptors with all_public_streams=True
-realm_clients_all_streams = {}
+realm_clients_all_streams = {} # type: Dict[int, List[ClientDescriptor]]
 
 # list of registered gc hooks.
 # each one will be called with a user profile id, queue, and bool
 # last_for_client that is true if this is the last queue pertaining
 # to this user_profile_id
 # that is about to be deleted
-gc_hooks = []
+gc_hooks = [] # type: List[Callable[[int, ClientDescriptor, bool], None]]
 
 next_queue_id = 0
 
 def add_client_gc_hook(hook):
+    # type: (Callable[[int, ClientDescriptor, bool], None]) -> None
     gc_hooks.append(hook)
 
 def get_client_descriptor(queue_id):
+    # type: (str) -> ClientDescriptor
     return clients.get(queue_id)
 
 def get_client_descriptors_for_user(user_profile_id):
+    # type: (int) -> List[ClientDescriptor]
     return user_clients.get(user_profile_id, [])
 
 def get_client_descriptors_for_realm_all_streams(realm_id):
+    # type: (int) -> List[ClientDescriptor]
     return realm_clients_all_streams.get(realm_id, [])
 
 def add_to_client_dicts(client):
+    # type: (ClientDescriptor) -> None
     user_clients.setdefault(client.user_profile_id, []).append(client)
     if client.all_public_streams or client.narrow != []:
         realm_clients_all_streams.setdefault(client.realm_id, []).append(client)
 
-def allocate_client_descriptor(user_profile_id, realm_id, event_types, client_type,
-                               apply_markdown, all_public_streams, lifespan_secs,
-                               narrow=[]):
+def allocate_client_descriptor(new_queue_data):
+    # type: (MutableMapping[str, Any]) -> ClientDescriptor
     global next_queue_id
-    id = str(settings.SERVER_GENERATION) + ':' + str(next_queue_id)
+    queue_id = str(settings.SERVER_GENERATION) + ':' + str(next_queue_id)
     next_queue_id += 1
-    client = ClientDescriptor(user_profile_id, realm_id, EventQueue(id), event_types, client_type,
-                              apply_markdown, all_public_streams, lifespan_secs, narrow)
-    clients[id] = client
+    new_queue_data["event_queue"] = EventQueue(queue_id).to_dict()
+    client = ClientDescriptor.from_dict(new_queue_data)
+    clients[queue_id] = client
     add_to_client_dicts(client)
     return client
 
 def do_gc_event_queues(to_remove, affected_users, affected_realms):
+    # type: (AbstractSet[str], AbstractSet[int], AbstractSet[int]) -> None
     def filter_client_dict(client_dict, key):
+        # type: (MutableMapping[int, List[ClientDescriptor]], int) -> None
         if key not in client_dict:
             return
 
@@ -340,61 +400,60 @@ def do_gc_event_queues(to_remove, affected_users, affected_realms):
         del clients[id]
 
 def gc_event_queues():
+    # type: () -> None
     start = time.time()
-    to_remove = set()
-    affected_users = set()
-    affected_realms = set()
-    for (id, client) in clients.iteritems():
+    to_remove = set() # type: Set[str]
+    affected_users = set() # type: Set[int]
+    affected_realms = set() # type: Set[int]
+    for (id, client) in six.iteritems(clients):
         if client.idle(start):
             to_remove.add(id)
             affected_users.add(client.user_profile_id)
             affected_realms.add(client.realm_id)
 
+    # We don't need to call e.g. finish_current_handler on the clients
+    # being removed because they are guaranteed to be idle and thus
+    # not have a current handler.
     do_gc_event_queues(to_remove, affected_users, affected_realms)
 
     logging.info(('Tornado removed %d idle event queues owned by %d users in %.3fs.'
-                  + '  Now %d active queues')
+                  + '  Now %d active queues, %s')
                  % (len(to_remove), len(affected_users), time.time() - start,
-                    len(clients)))
+                    len(clients), handler_stats_string()))
     statsd.gauge('tornado.active_queues', len(clients))
     statsd.gauge('tornado.active_users', len(user_clients))
 
 def dump_event_queues():
+    # type: () -> None
     start = time.time()
 
-    with file(settings.JSON_PERSISTENT_QUEUE_FILENAME, "w") as stored_queues:
-        ujson.dump([(qid, client.to_dict()) for (qid, client) in clients.iteritems()],
+    with open(settings.JSON_PERSISTENT_QUEUE_FILENAME, "w") as stored_queues:
+        ujson.dump([(qid, client.to_dict()) for (qid, client) in six.iteritems(clients)],
                    stored_queues)
 
     logging.info('Tornado dumped %d event queues in %.3fs'
                  % (len(clients), time.time() - start))
 
 def load_event_queues():
+    # type: () -> None
     global clients
     start = time.time()
 
-    if os.path.exists(settings.PERSISTENT_QUEUE_FILENAME):
+    # ujson chokes on bad input pretty easily.  We separate out the actual
+    # file reading from the loading so that we don't silently fail if we get
+    # bad input.
+    try:
+        with open(settings.JSON_PERSISTENT_QUEUE_FILENAME, "r") as stored_queues:
+            json_data = stored_queues.read()
         try:
-            with file(settings.PERSISTENT_QUEUE_FILENAME, "r") as stored_queues:
-                clients = pickle.load(stored_queues)
-        except (IOError, EOFError):
-            pass
-    else:
-        # ujson chokes on bad input pretty easily.  We separate out the actual
-        # file reading from the loading so that we don't silently fail if we get
-        # bad input.
-        try:
-            with file(settings.JSON_PERSISTENT_QUEUE_FILENAME, "r") as stored_queues:
-                json_data = stored_queues.read()
-            try:
-                clients = dict((qid, ClientDescriptor.from_dict(client))
-                               for (qid, client) in ujson.loads(json_data))
-            except Exception:
-                logging.exception("Could not deserialize event queues")
-        except (IOError, EOFError):
-            pass
+            clients = dict((qid, ClientDescriptor.from_dict(client))
+                           for (qid, client) in ujson.loads(json_data))
+        except Exception:
+            logging.exception("Could not deserialize event queues")
+    except (IOError, EOFError):
+        pass
 
-    for client in clients.itervalues():
+    for client in six.itervalues(clients):
         # Put code for migrations due to event queue data format changes here
 
         add_to_client_dicts(client)
@@ -402,22 +461,23 @@ def load_event_queues():
     logging.info('Tornado loaded %d event queues in %.3fs'
                  % (len(clients), time.time() - start))
 
-def send_restart_events():
-    event = dict(type='restart', server_generation=settings.SERVER_GENERATION)
-    for client in clients.itervalues():
+def send_restart_events(immediate=False):
+    # type: (bool) -> None
+    event = dict(type='restart', server_generation=settings.SERVER_GENERATION) # type: Dict[str, Any]
+    if immediate:
+        event['immediate'] = True
+    for client in six.itervalues(clients):
         if client.accepts_event(event):
             client.add_event(event.copy())
 
 def setup_event_queue():
-    load_event_queues()
-    atexit.register(dump_event_queues)
-    # Make sure we dump event queues even if we exit via signal
-    signal.signal(signal.SIGTERM, lambda signum, stack: sys.exit(1))
-
-    try:
-        os.rename(settings.PERSISTENT_QUEUE_FILENAME, "/var/tmp/event_queues.pickle.last")
-    except OSError:
-        pass
+    # type: () -> None
+    if not settings.TEST_SUITE:
+        load_event_queues()
+        atexit.register(dump_event_queues)
+        # Make sure we dump event queues even if we exit via signal
+        signal.signal(signal.SIGTERM, lambda signum, stack: sys.exit(1))
+        tornado.autoreload.add_reload_hook(dump_event_queues) # type: ignore # TODO: Fix missing tornado.autoreload stub
 
     try:
         os.rename(settings.JSON_PERSISTENT_QUEUE_FILENAME, "/var/tmp/event_queues.json.last")
@@ -430,7 +490,63 @@ def setup_event_queue():
                                          EVENT_QUEUE_GC_FREQ_MSECS, ioloop)
     pc.start()
 
-    send_restart_events()
+    send_restart_events(immediate=settings.DEVELOPMENT)
+
+def fetch_events(query):
+    # type: (Mapping[str, Any]) -> Dict[str, Any]
+    queue_id = query["queue_id"] # type: str
+    dont_block = query["dont_block"] # type: bool
+    last_event_id = query["last_event_id"] # type: int
+    user_profile_id = query["user_profile_id"] # type: int
+    new_queue_data = query.get("new_queue_data") # type: Optional[MutableMapping[str, Any]]
+    user_profile_email = query["user_profile_email"] # type: text_type
+    client_type_name = query["client_type_name"] # type: text_type
+    handler_id = query["handler_id"] # type: int
+
+    try:
+        was_connected = False
+        orig_queue_id = queue_id
+        extra_log_data = ""
+        if queue_id is None:
+            if dont_block:
+                client = allocate_client_descriptor(new_queue_data)
+                queue_id = client.event_queue.id
+            else:
+                raise JsonableError(_("Missing 'queue_id' argument"))
+        else:
+            if last_event_id is None:
+                raise JsonableError(_("Missing 'last_event_id' argument"))
+            client = get_client_descriptor(queue_id)
+            if client is None:
+                raise JsonableError(_("Bad event queue id: %s") % (queue_id,))
+            if user_profile_id != client.user_profile_id:
+                raise JsonableError(_("You are not authorized to get events from this queue"))
+            client.event_queue.prune(last_event_id)
+            was_connected = client.finish_current_handler()
+
+        if not client.event_queue.empty() or dont_block:
+            response = dict(events=client.event_queue.contents(),
+                            handler_id=handler_id) # type: Dict[str, Any]
+            if orig_queue_id is None:
+                response['queue_id'] = queue_id
+            extra_log_data = "[%s/%s]" % (queue_id, len(response["events"]))
+            if was_connected:
+                extra_log_data += " [was connected]"
+            return dict(type="response", response=response, extra_log_data=extra_log_data)
+
+        # After this point, dont_block=False, the queue is empty, and we
+        # have a pre-existing queue, so we wait for new events.
+        if was_connected:
+            logging.info("Disconnected handler for queue %s (%s/%s)" % (queue_id, user_profile_email,
+                                                                        client_type_name))
+    except JsonableError as e:
+        if hasattr(e, 'to_json_error_msg') and callable(e.to_json_error_msg):
+            return dict(type="error", handler_id=handler_id,
+                        message=e.to_json_error_msg())
+        raise e
+
+    client.connect_handler(handler_id, client_type_name)
+    return dict(type="async")
 
 # The following functions are called from Django
 
@@ -438,14 +554,16 @@ def setup_event_queue():
 # from a property to a function
 requests_json_is_function = callable(requests.Response.json)
 def extract_json_response(resp):
+    # type: (requests.Response) -> Dict[str, Any]
     if requests_json_is_function:
         return resp.json()
     else:
-        return resp.json
+        return resp.json # type: ignore # mypy trusts the stub, not the runtime type checking of this fn
 
 def request_event_queue(user_profile, user_client, apply_markdown,
                         queue_lifespan_secs, event_types=None, all_public_streams=False,
                         narrow=[]):
+    # type: (UserProfile, Client, bool, int, Optional[Iterable[str]], bool, Iterable[Sequence[text_type]]) -> Optional[str]
     if settings.TORNADO_SERVER:
         req = {'dont_block'    : 'true',
                'apply_markdown': ujson.dumps(apply_markdown),
@@ -468,6 +586,7 @@ def request_event_queue(user_profile, user_client, apply_markdown,
     return None
 
 def get_user_events(user_profile, queue_id, last_event_id):
+    # type: (UserProfile, str, int) -> List[Dict]
     if settings.TORNADO_SERVER:
         resp = requests.get(settings.TORNADO_SERVER + '/api/v1/events',
                             auth=requests.auth.HTTPBasicAuth(user_profile.email,
@@ -485,24 +604,25 @@ def get_user_events(user_profile, queue_id, last_event_id):
 # Send email notifications to idle users
 # after they are idle for 1 hour
 NOTIFY_AFTER_IDLE_HOURS = 1
-
 def build_offline_notification(user_profile_id, message_id):
+    # type: (int, int) -> Dict[str, Any]
     return {"user_profile_id": user_profile_id,
             "message_id": message_id,
             "timestamp": time.time()}
 
 def missedmessage_hook(user_profile_id, queue, last_for_client):
+    # type: (int, ClientDescriptor, bool) -> None
     # Only process missedmessage hook when the last queue for a
     # client has been garbage collected
     if not last_for_client:
         return
 
-    message_ids_to_notify = []
+    message_ids_to_notify = [] # type: List[Dict[str, Any]]
     for event in queue.event_queue.contents():
         if not event['type'] == 'message' or not event['flags']:
             continue
 
-        if 'mentioned' in event['flags'] and not 'read' in event['flags']:
+        if 'mentioned' in event['flags'] and 'read' not in event['flags']:
             notify_info = dict(message_id=event['message']['id'])
 
             if not event.get('push_notified', False):
@@ -519,13 +639,8 @@ def missedmessage_hook(user_profile_id, queue, last_for_client):
         if notify_info.get('send_email', False):
             queue_json_publish("missedmessage_emails", notice, lambda notice: None)
 
-@cache_with_key(message_cache_key, timeout=3600*24)
-def get_message_by_id_dbwarn(message_id):
-    if not settings.TEST_SUITE:
-        logging.warning("Tornado failed to load message from memcached when delivering!")
-    return Message.objects.select_related().get(id=message_id)
-
 def receiver_is_idle(user_profile_id, realm_presences):
+    # type: (int, Optional[Dict[int, Dict[text_type, Dict[str, Any]]]]) -> bool
     # If a user has no message-receiving event queues, they've got no open zulip
     # session so we notify them
     all_client_descriptors = get_client_descriptors_for_user(user_profile_id)
@@ -536,7 +651,7 @@ def receiver_is_idle(user_profile_id, realm_presences):
     # presence information in this case (and it's hard to get without an additional
     # db query) so we simply don't try to guess if this cross-realm recipient
     # has been idle for too long
-    if realm_presences is None or not user_profile_id in realm_presences:
+    if realm_presences is None or user_profile_id not in realm_presences:
         return off_zulip
 
     # We want to find the newest "active" presence entity and compare that to the
@@ -545,7 +660,7 @@ def receiver_is_idle(user_profile_id, realm_presences):
     latest_active_timestamp = None
     idle = False
 
-    for client, status in user_presence.iteritems():
+    for client, status in six.iteritems(user_presence):
         if (latest_active_timestamp is None or status['timestamp'] > latest_active_timestamp) and \
                 status['status'] == 'active':
             latest_active_timestamp = status['timestamp']
@@ -560,27 +675,21 @@ def receiver_is_idle(user_profile_id, realm_presences):
     return off_zulip or idle
 
 def process_message_event(event_template, users):
-    realm_presences = {int(k): v for k, v in event_template['presences'].items()}
-    sender_queue_id = event_template.get('sender_queue_id', None)
-    if "message_dict_markdown" in event_template:
-        message_dict_markdown = event_template['message_dict_markdown']
-        message_dict_no_markdown = event_template['message_dict_no_markdown']
-    else:
-        # We can delete this and get_message_by_id_dbwarn after the
-        # next prod deploy
-        message = get_message_by_id_dbwarn(event_template['message'])
-        message_dict_markdown = message.to_dict(True)
-        message_dict_no_markdown = message.to_dict(False)
-    sender_id = message_dict_markdown['sender_id']
-    message_id = message_dict_markdown['id']
-    message_type = message_dict_markdown['type']
-    sending_client = message_dict_markdown['client']
+    # type: (Mapping[str, Any], Iterable[Mapping[str, Any]]) -> None
+    realm_presences = {int(k): v for k, v in event_template['presences'].items()} # type: Dict[int, Dict[text_type, Dict[str, Any]]]
+    sender_queue_id = event_template.get('sender_queue_id', None) # type: Optional[str]
+    message_dict_markdown = event_template['message_dict_markdown'] # type: Dict[str, Any]
+    message_dict_no_markdown = event_template['message_dict_no_markdown'] # type: Dict[str, Any]
+    sender_id = message_dict_markdown['sender_id'] # type: int
+    message_id = message_dict_markdown['id'] # type: int
+    message_type = message_dict_markdown['type'] # type: str
+    sending_client = message_dict_markdown['client'] # type: text_type
 
     # To remove duplicate clients: Maps queue ID to {'client': Client, 'flags': flags}
-    send_to_clients = dict()
+    send_to_clients = {} # type: Dict[str, Dict[str, Any]]
 
     # Extra user-specific data to include
-    extra_user_data = {}
+    extra_user_data = {} # type: Dict[int, Any]
 
     if 'stream_name' in event_template and not event_template.get("invite_only"):
         for client in get_client_descriptors_for_realm_all_streams(event_template['realm_id']):
@@ -589,8 +698,8 @@ def process_message_event(event_template, users):
                 send_to_clients[client.event_queue.id]['is_sender'] = True
 
     for user_data in users:
-        user_profile_id = user_data['id']
-        flags = user_data.get('flags', [])
+        user_profile_id = user_data['id'] # type: int
+        flags = user_data.get('flags', []) # type: Iterable[str]
 
         for client in get_client_descriptors_for_user(user_profile_id):
             send_to_clients[client.event_queue.id] = {'client': client, 'flags': flags}
@@ -606,7 +715,7 @@ def process_message_event(event_template, users):
         if (received_pm or mentioned) and (idle or always_push_notify):
             notice = build_offline_notification(user_profile_id, message_id)
             queue_json_publish("missedmessage_mobile_notifications", notice, lambda notice: None)
-            notified = dict(push_notified=True)
+            notified = dict(push_notified=True) # type: Dict[str, bool]
             # Don't send missed message emails if always_push_notify is True
             if idle:
                 # We require RabbitMQ to do this, as we can't call the email handler
@@ -616,11 +725,11 @@ def process_message_event(event_template, users):
 
             extra_user_data[user_profile_id] = notified
 
-    for client_data in send_to_clients.itervalues():
+    for client_data in six.itervalues(send_to_clients):
         client = client_data['client']
         flags = client_data['flags']
-        is_sender = client_data.get('is_sender', False)
-        extra_data = extra_user_data.get(client.user_profile_id, None)
+        is_sender = client_data.get('is_sender', False) # type: bool
+        extra_data = extra_user_data.get(client.user_profile_id, None) # type: Optional[Mapping[str, bool]]
 
         if not client.accepts_messages():
             # The actual check is the accepts_event() check below;
@@ -634,11 +743,11 @@ def process_message_event(event_template, users):
             message_dict = message_dict_no_markdown
 
         # Make sure Zephyr mirroring bots know whether stream is invite-only
-        if "mirror" in client.client_type.name and event_template.get("invite_only"):
+        if "mirror" in client.client_type_name and event_template.get("invite_only"):
             message_dict = message_dict.copy()
             message_dict["invite_only_stream"] = True
 
-        user_event = dict(type='message', message=message_dict, flags=flags)
+        user_event = dict(type='message', message=message_dict, flags=flags) # type: Dict[str, Any]
         if extra_data is not None:
             user_event.update(extra_data)
 
@@ -652,20 +761,22 @@ def process_message_event(event_template, users):
 
         # The below prevents (Zephyr) mirroring loops.
         if ('mirror' in sending_client and
-            sending_client.lower() == client.client_type.name.lower()):
+            sending_client.lower() == client.client_type_name.lower()):
             continue
         client.add_event(user_event)
 
 def process_event(event, users):
+    # type: (Mapping[str, Any], Iterable[int]) -> None
     for user_profile_id in users:
         for client in get_client_descriptors_for_user(user_profile_id):
             if client.accepts_event(event):
-                client.add_event(event.copy())
+                client.add_event(dict(event))
 
 def process_userdata_event(event_template, users):
+    # type: (Mapping[str, Any], Iterable[Mapping[str, Any]]) -> None
     for user_data in users:
         user_profile_id = user_data['id']
-        user_event = event_template.copy() # shallow, but deep enough for our needs
+        user_event = dict(event_template) # shallow copy, but deep enough for our needs
         for key in user_data.keys():
             if key != "id":
                 user_event[key] = user_data[key]
@@ -675,14 +786,15 @@ def process_userdata_event(event_template, users):
                 client.add_event(user_event)
 
 def process_notification(notice):
-    event = notice['event']
-    users = notice['users']
+    # type: (Mapping[str, Any]) -> None
+    event = notice['event'] # type: Mapping[str, Any]
+    users = notice['users'] # type: Union[Iterable[int], Iterable[Mapping[str, Any]]]
     if event['type'] in ["update_message"]:
-        process_userdata_event(event, users)
+        process_userdata_event(event, cast(Iterable[Mapping[str, Any]], users))
     elif event['type'] == "message":
-        process_message_event(event, users)
+        process_message_event(event, cast(Iterable[Mapping[str, Any]], users))
     else:
-        process_event(event, users)
+        process_event(event, cast(Iterable[int], users))
 
 # Runs in the Django process to send a notification to Tornado.
 #
@@ -690,6 +802,7 @@ def process_notification(notice):
 # different types and for compatibility with non-HTTP transports.
 
 def send_notification_http(data):
+    # type: (Mapping[str, Any]) -> None
     if settings.TORNADO_SERVER and not settings.RUNNING_INSIDE_TORNADO:
         requests.post(settings.TORNADO_SERVER + '/notify_tornado', data=dict(
                 data   = ujson.dumps(data),
@@ -698,9 +811,14 @@ def send_notification_http(data):
         process_notification(data)
 
 def send_notification(data):
-    return queue_json_publish("notify_tornado", data, send_notification_http)
+    # type: (Mapping[str, Any]) -> None
+    queue_json_publish("notify_tornado", data, send_notification_http)
 
 def send_event(event, users):
-    return queue_json_publish("notify_tornado",
-                              dict(event=event, users=users),
-                              send_notification_http)
+    # type: (Mapping[str, Any], Union[Iterable[int], Iterable[Mapping[str, Any]]]) -> None
+    """`users` is a list of user IDs, or in the case of `message` type
+    events, a list of dicts describing the users and metadata about
+    the user/message pair."""
+    queue_json_publish("notify_tornado",
+                       dict(event=event, users=users),
+                       send_notification_http)

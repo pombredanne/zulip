@@ -49,6 +49,8 @@ body {
     font-family: 'Humbug', Helvetica, Arial, sans-serif;
     line-height: 150%;
     height: 100%;
+    font-weight: 300;
+    font-size: 17px;
 }
 
 li {
@@ -95,7 +97,7 @@ a.title:hover {
     font-weight: bold;
 }
 
-img.screenshot{
+img.screenshot {
     /* This makes it so screenshots are still shown if they are larger than their span.*/
     max-width: 100%;
 }
@@ -665,6 +667,10 @@ a.bottom-signup-button {
     margin-left: 10px;
 }
 
+.new-organization-button {
+    margin-top: 10px;
+}
+
 .login-form .control-label, .register-form .control-label {
     margin-bottom: 2px;
 }
@@ -691,14 +697,14 @@ a.bottom-signup-button {
     font-weight: 300;
 }
 
-.login-google, .register-google, .login-sso {
+.login-google, .register-google, .login-sso, .login-github {
     width: 300px;
     margin: auto;
     text-align: center;
     margin-top: 30px;
 }
 
-.login-google-button, .register-google-button {
+.login-google-button, .register-google-button, .login-github-button {
     margin-left: 10px;
 }
 

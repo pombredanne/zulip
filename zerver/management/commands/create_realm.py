@@ -2,12 +2,14 @@ from __future__ import absolute_import
 from __future__ import print_function
 from optparse import make_option
 
+from typing import Any
+
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from zerver.lib.actions import do_create_realm, set_default_streams
 from zerver.models import RealmAlias
 
-if not settings.VOYAGER:
+if settings.ZILENCER_ENABLED:
     from zilencer.models import Deployment
 
 import re
@@ -16,7 +18,7 @@ import sys
 class Command(BaseCommand):
     help = """Create a realm for the specified domain.
 
-Usage: python2.7 manage.py create_realm --domain=foo.com --name='Foo, Inc.'"""
+Usage: python manage.py create_realm --domain=foo.com --name='Foo, Inc.'"""
 
     option_list = BaseCommand.option_list + (
         make_option('-o', '--open-realm',
@@ -40,8 +42,10 @@ Usage: python2.7 manage.py create_realm --domain=foo.com --name='Foo, Inc.'"""
         )
 
     def validate_domain(self, domain):
+        # type: (str) -> None
         # Domains can't contain whitespace if they are to be used in memcached
-        # keys.
+        # keys. Seems safer to leave that as the default case regardless of
+        # which backing store we use.
         if re.search("\s", domain):
             raise ValueError("Domains can't contain whitespace")
 
@@ -55,16 +59,17 @@ Usage: python2.7 manage.py create_realm --domain=foo.com --name='Foo, Inc.'"""
             raise ValueError("Cannot create a new realm that is already an alias for an existing realm")
 
     def handle(self, *args, **options):
+        # type: (*Any, **Any) -> None
         if options["domain"] is None or options["name"] is None:
             print("\033[1;31mPlease provide both a domain and name.\033[0m\n", file=sys.stderr)
-            self.print_help("python2.7 manage.py", "create_realm")
+            self.print_help("python manage.py", "create_realm")
             exit(1)
 
         if options["open_realm"] and options["deployment_id"] is not None:
             print("\033[1;31mExternal deployments cannot be open realms.\033[0m\n", file=sys.stderr)
-            self.print_help("python2.7 manage.py", "create_realm")
+            self.print_help("python manage.py", "create_realm")
             exit(1)
-        if options["deployment_id"] is not None and settings.VOYAGER:
+        if options["deployment_id"] is not None and not settings.ZILENCER_ENABLED:
             print("\033[1;31mExternal deployments are not supported on voyager deployments.\033[0m\n", file=sys.stderr)
             exit(1)
 
@@ -82,7 +87,7 @@ Usage: python2.7 manage.py create_realm --domain=foo.com --name='Foo, Inc.'"""
                 deployment.realms.add(realm)
                 deployment.save()
                 print("Added to deployment", str(deployment.id))
-            elif settings.ZULIP_COM:
+            elif settings.PRODUCTION and settings.ZILENCER_ENABLED:
                 deployment = Deployment.objects.get(base_site_url="https://zulip.com/")
                 deployment.realms.add(realm)
                 deployment.save()

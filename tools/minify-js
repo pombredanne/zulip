@@ -1,13 +1,17 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
 # Minifies JavaScripts, creating source maps
 
 from __future__ import absolute_import
+from __future__ import print_function
 
 import os
 import subprocess
 import optparse
 import sys
+import six
+
+from typing import Optional, Set
 
 parser = optparse.OptionParser()
 parser.add_option('--prev-deploy', nargs=1, metavar='DIR',
@@ -32,6 +36,7 @@ subprocess.check_call(['tools/compile-handlebars-templates'])
 subprocess.check_call(['tools/webpack'])
 
 def get_changed_source_files(other_checkout):
+    # type: (Optional[str]) -> Optional[Set[str]]
     """ Get list of changed static files since other_checkout.
     If git fails to return a reasonable looking list, this returns None,
     in which case it should be assumed no files can be reused from
@@ -40,20 +45,20 @@ def get_changed_source_files(other_checkout):
     try:
         git_dir = os.path.join(other_checkout, '.git')
         old_commit_sha1 = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
-                                                  env={'GIT_DIR': git_dir})
+                                                  env={'GIT_DIR': git_dir}, universal_newlines=True)
         old_commit_sha1 = old_commit_sha1.rstrip()
 
         git_diff = subprocess.check_output(['git', 'diff', '--name-only',
-                                            old_commit_sha1])
+                                            old_commit_sha1], universal_newlines=True)
     except subprocess.CalledProcessError:
         # If git returned an error, assume we can't reuse any files, and
         # regenerate everything.
-        print "Warning: git returned an error when comparing to the previous"
+        print("Warning: git returned an error when comparing to the previous")
         print ("deploy in %s. Will re-minify JavaScript instead of reusing"
-               % other_checkout)
+               % (other_checkout,))
         return None
 
-    changed = set()
+    changed = set() # type: Set[str]
     for filename in git_diff.split('\n'):
         if not filename.startswith(STATIC_PATH):
             continue  # Ignore non-static files.
@@ -66,7 +71,7 @@ def get_changed_source_files(other_checkout):
     return changed
 
 
-changed_files = set()
+changed_files = set() # type: Set[str]
 if prev_deploy:
     changed_files = get_changed_source_files(prev_deploy)
     if changed_files is None:
@@ -82,8 +87,9 @@ CLOSURE_BINARY = '/usr/bin/closure-compiler'
 if not os.path.exists(CLOSURE_BINARY):
     CLOSURE_BINARY = 'tools/closure-compiler/run'
     if not os.path.exists(CLOSURE_BINARY):
-        print "closure-compiler not installed; the Vagrant provision.py installs it via apt "\
-            "or you can manually unpack http://dl.google.com/closure-compiler/compiler-latest.zip to tools/closure-compiler"
+        print("closure-compiler not installed; the Vagrant tools/provision.py installs it via apt "\
+              "or you can manually unpack http://dl.google.com/closure-compiler/compiler-latest.zip to "\
+              "tools/closure-compiler")
         sys.exit(1)
 
 # Where to put minified JS and source maps
@@ -91,7 +97,7 @@ MIN_DIR = os.path.join(STATIC_PATH, 'min/')
 MAP_DIR = os.path.join(STATIC_PATH, 'source-map/')
 subprocess.check_call(['mkdir', '-p', MIN_DIR, MAP_DIR])
 
-for js_group, filespec in JS_SPECS.iteritems():
+for js_group, filespec in six.iteritems(JS_SPECS):
     #      JS_SPECS look like        'js/foobar.js'.
     # changed_files look like 'static/js/foobar.js'.
     # So we prepend 'static/' to the JS_SPECS so these match up.
@@ -124,5 +130,5 @@ for js_group, filespec in JS_SPECS.iteritems():
     js = subprocess.check_output(cmd, shell=True)
 
     # Write out the JS
-    with open(out_file, 'w') as fp:
+    with open(out_file, 'wb') as fp:
         fp.write(js)

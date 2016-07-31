@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 # Copyright (C) 2012 Zulip, Inc.
 #
 # Permission is hereby granted, free of charge, to any person
@@ -21,6 +21,7 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 from __future__ import absolute_import
+from typing import Any, List
 
 import sys
 from six.moves import map
@@ -28,7 +29,7 @@ from six.moves import range
 try:
     import simplejson
 except ImportError:
-    import json as simplejson
+    import json as simplejson # type: ignore
 import re
 import time
 import subprocess
@@ -47,6 +48,8 @@ DEFAULT_SITE = "https://api.zulip.com"
 class States(object):
     Startup, ZulipToZephyr, ZephyrToZulip, ChildSending = list(range(4))
 CURRENT_STATE = States.Startup
+
+logger = None # type: logging.Logger
 
 def to_zulip_username(zephyr_username):
     if "@" in zephyr_username:
@@ -191,7 +194,7 @@ def zephyr_bulk_subscribe(subs):
 
 def update_subscriptions():
     try:
-        f = file(options.stream_file_path, "r")
+        f = open(options.stream_file_path, "r")
         public_streams = simplejson.loads(f.read())
         f.close()
     except:
@@ -287,7 +290,7 @@ def parse_zephyr_body(zephyr_data):
 
 def parse_crypt_table(zephyr_class, instance):
     try:
-        crypt_table = file(os.path.join(os.environ["HOME"], ".crypt-table"))
+        crypt_table = open(os.path.join(os.environ["HOME"], ".crypt-table"))
     except IOError:
         return None
 
@@ -349,7 +352,7 @@ def process_notice(notice, log):
 
     if zephyr_class == options.nagios_class:
         # Mark that we got the message and proceed
-        with file(options.nagios_path, "w") as f:
+        with open(options.nagios_path, "w") as f:
             f.write("0\n")
         return
 
@@ -468,7 +471,7 @@ def zephyr_load_session_autoretry(session_path):
     backoff = zulip.RandomExponentialBackoff()
     while backoff.keep_going():
         try:
-            session = file(session_path, "r").read()
+            session = open(session_path, "r").read()
             zephyr._z.initialize()
             zephyr._z.load_session(session)
             zephyr.__inited = True
@@ -510,7 +513,7 @@ def zephyr_to_zulip(options):
         if options.nagios_class:
             zephyr_subscribe_autoretry((options.nagios_class, "*", "*"))
         if options.use_sessions:
-            file(options.session_path, "w").write(zephyr._z.dump_session())
+            open(options.session_path, "w").write(zephyr._z.dump_session())
 
     if options.logs_to_resend is not None:
         with open(options.logs_to_resend, 'r') as log:
@@ -804,9 +807,9 @@ def add_zulip_subscriptions(verbose):
         unauthorized = res.get("unauthorized")
         if verbose:
             if already is not None and len(already) > 0:
-                logger.info("\nAlready subscribed to: %s" % (", ".join(already.values()[0]),))
+                logger.info("\nAlready subscribed to: %s" % (", ".join(list(already.values())[0]),))
             if new is not None and len(new) > 0:
-                logger.info("\nSuccessfully subscribed to: %s" % (", ".join(new.values()[0]),))
+                logger.info("\nSuccessfully subscribed to: %s" % (", ".join(list(new.values())[0]),))
             if unauthorized is not None and len(unauthorized) > 0:
                 logger.info("\n" + "\n".join(textwrap.wrap("""\
 The following streams you have NOT been subscribed to,
@@ -857,7 +860,7 @@ def parse_zephyr_subs(verbose=False):
             logger.error("Couldn't find ~/.zephyr.subs!")
         return []
 
-    for line in file(subs_file, "r").readlines():
+    for line in open(subs_file, "r").readlines():
         line = line.strip()
         if len(line) == 0:
             continue
@@ -878,6 +881,7 @@ def parse_zephyr_subs(verbose=False):
     return zephyr_subscriptions
 
 def open_logger():
+    # type: () -> logging.Logger
     if options.log_path is not None:
         log_file = options.log_path
     elif options.forward_class_messages:
@@ -1025,7 +1029,7 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGINT, die_gracefully)
 
-    (options, args) = parse_args()
+    (options, args) = parse_args() # type: Any, List[str]
 
     logger = open_logger()
     configure_logger(logger, "parent")
@@ -1050,7 +1054,7 @@ Could not find API key file.
 You need to either place your api key file at %s,
 or specify the --api-key-file option.""" % (options.api_key_file,))))
             sys.exit(1)
-        api_key = file(options.api_key_file).read().strip()
+        api_key = open(options.api_key_file).read().strip()
         # Store the API key in the environment so that our children
         # don't need to read it in
         os.environ["HUMBUG_API_KEY"] = api_key
@@ -1113,7 +1117,7 @@ or specify the --api-key-file option.""" % (options.api_key_file,))))
         options.session_path = "/var/tmp/%s" % (options.user,)
 
     if options.forward_from_zulip:
-        child_pid = os.fork()
+        child_pid = os.fork() # type: int
         if child_pid == 0:
             CURRENT_STATE = States.ZulipToZephyr
             # Run the zulip => zephyr mirror in the child

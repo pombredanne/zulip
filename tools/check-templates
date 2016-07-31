@@ -1,17 +1,37 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
+from __future__ import absolute_import
+from __future__ import print_function
+import optparse
 import os
 import sys
 import subprocess
+from six.moves import filter
+from six.moves import map
+from six.moves import range
+try:
+    import lister
+    from typing import cast, Callable, Dict, Iterable, List
+except ImportError as e:
+    print("ImportError: {}".format(e))
+    print("You need to run the Zulip linters inside a Zulip dev environment.")
+    print("If you are using Vagrant, you can `vagrant ssh` to enter the Vagrant guest.")
+    sys.exit(1)
 
-class Record:
-    pass
+class Record(object):
+    def __init__(self, func):
+        # type: (Callable[[str], None]) -> None
+        self.depth = 0
+        self.i = 0
+        self.line = 1
+        self.col = 1
+        self.matcher = func
 
 def validate(fn, check_indent=True):
+    # type: (str, bool) -> None
     text = open(fn).read()
 
-    state = Record()
-
     def NoStartTag(end_tag):
+        # type: (str) -> None
         raise Exception('''
             No start tag
             fn: %s
@@ -21,12 +41,14 @@ def validate(fn, check_indent=True):
             ''' % (fn, end_tag, state.line, state.col))
 
     def start_tag_matcher(s, start_tag):
+        # type: (str, str) -> None
         start_line = state.line
         start_col = state.col
         state.depth += 1
 
         old_matcher = state.matcher
         def f(end_tag):
+            # type: (str) -> None
             problem = None
             if start_tag != end_tag:
                 problem = 'Mismatched tag.'
@@ -47,13 +69,10 @@ def validate(fn, check_indent=True):
             state.depth -= 1
         state.matcher = f
 
-    state.depth = 0
-    state.i = 0
-    state.line = 1
-    state.col = 1
-    state.matcher = NoStartTag
+    state = Record(NoStartTag)
 
     def advance(n):
+        # type: (int) -> None
         for _ in range(n):
             state.i += 1
             if state.i >= 0 and text[state.i - 1] == '\n':
@@ -63,6 +82,7 @@ def validate(fn, check_indent=True):
                 state.col += 1
 
     def looking_at(s):
+        # type: (str) -> bool
         return text[state.i:state.i+len(s)] == s
 
     while state.i < len(text):
@@ -71,7 +91,9 @@ def validate(fn, check_indent=True):
         if looking_at("<") and not looking_at("</"):
             s = get_html_tag(text, state.i)
             tag = s[1:-1].split()[0]
-            ignore = s.startswith('<!--') or s.endswith('/>') or tag in ['meta', '!DOCTYPE']
+            ignore = (s.startswith('<!--') or
+                      s.endswith('/>') or
+                      tag in ['link', 'meta', '!DOCTYPE'])
             if not ignore:
                 start_tag_matcher(s, tag)
             advance(len(s))
@@ -118,9 +140,10 @@ def validate(fn, check_indent=True):
         advance(1)
 
     if state.depth != 0:
-        return state.matcher("(NO TAG)")
+        state.matcher("(NO TAG)")
 
 def is_django_block_tag(tag):
+    # type: (str) -> bool
     return tag in [
         'autoescape',
         'block',
@@ -130,9 +153,12 @@ def is_django_block_tag(tag):
         'ifequal',
         'verbatim',
         'blocktrans',
+        'trans',
+        'raw',
     ]
 
 def get_handlebars_tag(text, i):
+    # type: (str, int) -> str
     end = i + 2
     while end < len(text) -1 and text[end] != '}':
         end += 1
@@ -142,6 +168,7 @@ def get_handlebars_tag(text, i):
     return s
 
 def get_django_tag(text, i):
+    # type: (str, int) -> str
     end = i + 2
     while end < len(text) -1 and text[end] != '%':
         end += 1
@@ -151,37 +178,98 @@ def get_django_tag(text, i):
     return s
 
 def get_html_tag(text, i):
+    # type: (str, int) -> str
+    quote_count = 0
     end = i + 1
-    while end < len(text) and text[end] != '>':
+    while end < len(text) and (text[end] != '>' or quote_count % 2 != 0):
+        if text[end] == '"':
+            quote_count += 1
         end += 1
-    if text[end] != '>':
+    if end == len(text) or text[end] != '>':
         raise Exception('Tag missing >')
     s = text[i:end+1]
     return s
 
 def check_our_files():
-    git_files = map(str.strip, subprocess.check_output(['git', 'ls-files']).split('\n'))
+    # type: () -> None
+    parser = optparse.OptionParser()
+    parser.add_option('--modified', '-m',
+        action='store_true', default=False,
+        help='Only check modified files')
+    (options, _) = parser.parse_args()
 
+    by_lang = cast(
+        Dict[str, List[str]],
+        lister.list_files(
+            modified_only=options.modified,
+            ftypes=['handlebars', 'html'],
+            group_by_ftype=True))
+
+    check_handlebar_templates(by_lang['handlebars'], options.modified)
+    check_html_templates(by_lang['html'], options.modified)
+
+def check_handlebar_templates(templates, modified_only):
+    # type: (Iterable[str], bool) -> None
     # Check all our handlebars templates.
-    templates = [fn for fn in git_files if fn.endswith('.handlebars')]
-    assert len(templates) >= 10 # sanity check that we are actually doing work
+    templates = [fn for fn in templates if fn.endswith('.handlebars')]
+    if not modified_only:
+        assert len(templates) >= 10 # sanity check that we are actually doing work
     for fn in templates:
-        validate(fn)
+        validate(fn, check_indent=True)
 
-    # Django templates are pretty messy now, so we do minimal checking.
-    templates = sorted([fn for fn in git_files if fn.endswith('.html') and 'templates' in fn])
+def check_html_templates(templates, modified_only):
+    # type: (Iterable[str], bool) -> None
+    # Our files with .html extensions are usually for Django, but we also
+    # have a few static .html files.
+    # The file base.html has a bit of funny HTML that we can't parse here yet.
+    #
+    # We also have .html files that we vendored from Casper.
+    # The casperjs files use HTML5 (whereas Zulip prefers XHTML), and
+    # there are also cases where Casper deliberately uses invalid HTML,
+    # so we exclude them from our linter.
+    templates = filter(
+        lambda fn: ('base.html' not in fn) and ('casperjs' not in fn),
+        templates)
+    templates = sorted(list(templates))
 
-    def ok(fn):
-        if 'api.html' in fn: return False
-        if 'base.html' in fn: return False
-        return True
-
-    templates = filter(ok, templates)
-
-
-    assert len(templates) >= 10 # sanity check that we are actually doing work
+    if not modified_only:
+        assert len(templates) >= 10 # sanity check that we are actually doing work
     for fn in templates:
-        validate(fn, check_indent=False)
+        # Many of our Django templates have strange indentation.  The
+        # indentation errors are often harmless, even stylistically
+        # harmless, but they tend to be in files that might be old
+        # and might eventually require more scrutiny for things like
+        # localization.  See github #1236.
+        bad_files = [
+            'static/html/5xx.html',
+            'templates/500.html',
+            'templates/confirmation/confirm.html',
+            'templates/corporate/mit.html',
+            'templates/corporate/privacy.html',
+            'templates/corporate/terms-enterprise.html',
+            'templates/corporate/zephyr-mirror.html',
+            'templates/corporate/zephyr.html',
+            'templates/zerver/accounts_home.html',
+            'templates/zerver/accounts_send_confirm.html',
+            'templates/zerver/api.html',
+            'templates/zerver/api_endpoints.html',
+            'templates/zerver/apps.html',
+            'templates/zerver/create_realm.html',
+            'templates/zerver/emails/followup/day1.html',
+            'templates/zerver/emails/followup/day2.html',
+            'templates/zerver/features.html',
+            'templates/zerver/hello.html',
+            'templates/zerver/home.html',
+            'templates/zerver/integrations.html',
+            'templates/zerver/invite_user.html',
+            'templates/zerver/left-sidebar.html',
+            'templates/zerver/login.html',
+            'templates/zerver/markdown_help.html',
+            'templates/zerver/register.html',
+            'templates/zerver/right-sidebar.html',
+            'templates/zerver/search_operators.html',
+        ]
+        validate(fn, check_indent=(fn not in bad_files))
 
 if __name__ == '__main__':
     check_our_files()

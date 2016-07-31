@@ -1,10 +1,23 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python2
+from __future__ import print_function
+
 import optparse
 import subprocess
 import signal
 import traceback
 import sys
 import os
+
+# find out python version
+major_version = int(subprocess.check_output(['python', '-c', 'import sys; print(sys.version_info[0])']))
+if major_version != 2:
+    # use twisted from its python2 venv but use django, tornado, etc. from the python3 venv.
+    PATH = os.environ["PATH"]
+    activate_this = "/srv/zulip-venv/bin/activate_this.py"
+    if not os.path.exists(activate_this):
+        activate_this = "/srv/zulip-py2-twisted-venv/bin/activate_this.py"
+    exec(open(activate_this).read(), {}, dict(__file__=activate_this)) # type: ignore # https://github.com/python/mypy/issues/1577
+    os.environ["PATH"] = PATH
 
 from twisted.internet import reactor
 from twisted.web      import proxy, server, resource
@@ -14,9 +27,8 @@ from twisted.web      import proxy, server, resource
 from twisted.web.http import Request
 orig_finish = Request.finish
 def patched_finish(self):
-    if self._disconnected:
-        return
-    return orig_finish(self)
+    if not self._disconnected:
+        orig_finish(self)
 Request.finish = patched_finish
 
 if 'posix' in os.name and os.geteuid() == 0:
@@ -44,10 +56,13 @@ parser.add_option('--interface',
     action='store', dest='interface',
     default='127.0.0.1', help='Set the IP or hostname for the proxy to listen on')
 
+parser.add_option('--no-clear-memcached',
+    action='store_false', dest='clear_memcached',
+    default=True, help='Do not clear memcached')
+
 (options, args) = parser.parse_args()
 
 base_port   = 9991
-manage_args = ''
 if options.test:
     base_port   = 9981
     settings_module = "zproject.test_settings"
@@ -69,6 +84,10 @@ os.chdir(os.path.join(os.path.dirname(__file__), '..'))
 # Clean up stale .pyc files etc.
 subprocess.check_call('./tools/clean-repo')
 
+if options.clear_memcached:
+    print("Clearing memcached ...")
+    subprocess.check_call('./scripts/setup/flush-memcached')
+
 # Set up a new process group, so that we can later kill run{server,tornado}
 # and all of the processes they spawn.
 os.setpgrp()
@@ -76,15 +95,21 @@ os.setpgrp()
 # Pass --nostatic because we configure static serving ourselves in
 # zulip/urls.py.
 cmds = [['./tools/compile-handlebars-templates', 'forever'],
-        ['./tools/webpack', 'watch'],
-        ['python', 'manage.py', 'runserver', '--nostatic'] +
-          manage_args + ['localhost:%d' % (django_port,)],
-        ['python', 'manage.py', 'runtornado'] +
-          manage_args + ['localhost:%d' % (tornado_port,)],
+        ['python', 'manage.py', 'rundjango'] +
+          manage_args + ['127.0.0.1:%d' % (django_port,)],
+        ['python', '-u', 'manage.py', 'runtornado'] +
+          manage_args + ['127.0.0.1:%d' % (tornado_port,)],
         ['./tools/run-dev-queue-processors'] + manage_args,
-        ['env', 'PGHOST=localhost', # Force password authentication using .pgpass
+        ['env', 'PGHOST=127.0.0.1', # Force password authentication using .pgpass
          './puppet/zulip/files/postgresql/process_fts_updates']]
-
+if options.test:
+    # Webpack doesn't support 2 copies running on the same system, so
+    # in order to support running the Casper tests while a Zulip
+    # development server is running, we use webpack in production mode
+    # for the Casper tests.
+    subprocess.check_call('./tools/webpack')
+else:
+    cmds += [['./tools/webpack', '--watch', '--port', str(webpack_port)]]
 for cmd in cmds:
     subprocess.Popen(cmd)
 
@@ -98,13 +123,13 @@ class Resource(resource.Resource):
             request.uri.startswith('/json/events') or
             request.uri.startswith('/api/v1/events') or
             request.uri.startswith('/sockjs')):
-            return proxy.ReverseProxyResource('localhost', tornado_port, '/'+name)
+            return proxy.ReverseProxyResource('127.0.0.1', tornado_port, '/'+name)
 
         elif (request.uri.startswith('/webpack') or
               request.uri.startswith('/socket.io')):
-            return proxy.ReverseProxyResource('localhost', webpack_port, '/'+name)
+            return proxy.ReverseProxyResource('127.0.0.1', webpack_port, '/'+name)
 
-        return proxy.ReverseProxyResource('localhost', django_port, '/'+name)
+        return proxy.ReverseProxyResource('127.0.0.1', django_port, '/'+name)
 
 try:
     reactor.listenTCP(proxy_port, server.Site(Resource()), interface=options.interface)

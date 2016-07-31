@@ -47,8 +47,7 @@ exports.lower_bound = function (array, arg1, arg2, arg3, arg4) {
             first = middle;
             first++;
             len = len - step - 1;
-        }
-        else {
+        } else {
             len = step;
         }
     }
@@ -59,6 +58,19 @@ exports.same_stream_and_subject = function util_same_stream_and_subject(a, b) {
     // Streams and subjects are case-insensitive.
     return ((a.stream.toLowerCase() === b.stream.toLowerCase()) &&
             (a.subject.toLowerCase() === b.subject.toLowerCase()));
+};
+
+exports.is_current_user = function (email) {
+    return email.toLowerCase() === page_params.email.toLowerCase();
+};
+
+exports.is_pm_recipient = function (email, message) {
+    var recipients = message.reply_to.toLowerCase().split(',');
+    return recipients.indexOf(email.toLowerCase()) !== -1;
+};
+
+exports.extract_pm_recipients = function (recipients) {
+    return recipients.split(/\s*[,;]\s*/);
 };
 
 exports.same_major_recipient = function (a, b) {
@@ -73,7 +85,7 @@ exports.same_major_recipient = function (a, b) {
 
     switch (a.type) {
     case 'private':
-        return a.reply_to === b.reply_to;
+        return a.reply_to.toLowerCase() === b.reply_to.toLowerCase();
     case 'stream':
         return a.stream.toLowerCase() === b.stream.toLowerCase();
     }
@@ -92,7 +104,7 @@ exports.same_recipient = function util_same_recipient(a, b) {
 
     switch (a.type) {
     case 'private':
-        return a.reply_to === b.reply_to;
+        return a.reply_to.toLowerCase() === b.reply_to.toLowerCase();
     case 'stream':
         return exports.same_stream_and_subject(a, b);
     }
@@ -103,7 +115,7 @@ exports.same_recipient = function util_same_recipient(a, b) {
 
 exports.same_sender = function util_same_sender(a, b) {
     return ((a !== undefined) && (b !== undefined) &&
-            (a.sender_email === b.sender_email));
+            (a.sender_email.toLowerCase() === b.sender_email.toLowerCase()));
 };
 
 exports.normalize_recipients = function (recipients) {
@@ -168,6 +180,11 @@ exports.array_compare = function util_array_compare(a, b) {
         }
     }
     return true;
+};
+
+exports.string_in_list_case_insensitive = function (str, list) {
+    var dict = Dict.from_array(list || [], {fold_case: true});
+    return dict.has(str);
 };
 
 /* Represents a value that is expensive to compute and should be

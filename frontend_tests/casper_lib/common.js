@@ -2,7 +2,7 @@ var common = (function () {
 
 var exports = {};
 
-var test_credentials = require('../casper_lib/test_credentials.js').test_credentials;
+var test_credentials = require('../../var/casper/test_credentials.js').test_credentials;
 
 function timestamp() {
     return new Date().getTime();
@@ -32,7 +32,7 @@ exports.initialize_casper = function (viewport) {
     // casper.start has been called.
 
     // Set default viewport size to something reasonable
-    casper.page.viewportSize = viewport || {width: 1280, height: 768};
+    casper.page.viewportSize = viewport || {width: 1280, height: 1024};
 
     // Fail if we get a JavaScript error in the page's context.
     // Based on the example at http://phantomjs.org/release-1.5.html
@@ -83,7 +83,7 @@ exports.then_log_in = function (credentials) {
 };
 
 exports.start_and_log_in = function (credentials, viewport) {
-    casper.start('http://localhost:9981/accounts/login', function () {
+    casper.start('http://127.0.0.1:9981/accounts/login', function () {
         exports.initialize_casper(viewport);
         log_in(credentials);
     });
@@ -93,6 +93,37 @@ exports.then_log_out = function () {
     casper.then(function () {
         casper.test.info('Logging out');
         casper.click('li[title="Log out"] a');
+    });
+};
+
+// Put the specified string into the field_selector, then
+// select the menu item matching item by typing str.
+exports.select_item_via_typeahead = function (field_selector, str, item) {
+    casper.then(function () {
+        casper.test.info('Looking in ' + field_selector + ' to select ' + str + ', ' + item);
+
+        casper.evaluate(function (field_selector, str, item) {
+            // Set the value and then send a bogus keyup event to trigger
+            // the typeahead.
+            $(field_selector)
+                .focus()
+                .val(str)
+                .trigger($.Event('keyup', { which: 0 }));
+
+            // You might think these steps should be split by casper.then,
+            // but apparently that's enough to make the typeahead close (??),
+            // but not the first time.
+
+            // Trigger the typeahead.
+            // Reaching into the guts of Bootstrap Typeahead like this is not
+            // great, but I found it very hard to do it any other way.
+
+            var tah = $(field_selector).data().typeahead;
+            tah.mouseenter({
+                currentTarget: $('.typeahead:visible li:contains("'+item+'")')[0]
+            });
+            tah.select();
+        }, {field_selector:field_selector, str: str, item: item});
     });
 };
 
@@ -120,20 +151,18 @@ exports.check_form = function (form_selector, expected, test_name) {
 exports.then_send_message = function (type, params) {
     casper.waitForSelector('#compose-send-button:enabled');
     casper.waitForSelector('#new_message_content', function () {
-        if(type === "stream") {
+        if (type === "stream") {
             casper.page.sendEvent('keypress', "c");
-        }
-        else if (type === "private") {
+        } else if (type === "private") {
             casper.page.sendEvent('keypress', "C");
-        }
-        else {
+        } else {
             casper.test.assertTrue(false, "send_message got valid message type");
         }
-        casper.fill('form[action^="/json/send_message"]', params);
+        casper.fill('form[action^="/json/messages"]', params);
         casper.click('#compose-send-button');
     });
     casper.waitFor(function emptyComposeBox() {
-        return casper.getFormValues('form[action^="/json/send_message"]').content === '';
+        return casper.getFormValues('form[action^="/json/messages"]').content === '';
     }, function () {
         last_send_or_update = timestamp();
     });

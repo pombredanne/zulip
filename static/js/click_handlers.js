@@ -57,7 +57,7 @@ $(function () {
             }
 
             current_msg_list.select_id(id);
-            respond_to_message({trigger: 'message click'});
+            compose.respond_to_message({trigger: 'message click'});
             e.stopPropagation();
             popovers.hide_all();
         }
@@ -98,7 +98,7 @@ $(function () {
     });
     $("body").on("click", ".topic_edit_save", function (e) {
         var recipient_row = $(this).closest(".recipient_row");
-        if (message_edit.save(recipient_row) === true) {
+        if (message_edit.save(recipient_row, true) === true) {
             current_msg_list.hide_edit_topic(recipient_row);
         }
         e.stopPropagation();
@@ -112,7 +112,7 @@ $(function () {
     });
     $("body").on("click", ".message_edit_save", function (e) {
         var row = $(this).closest(".message_row");
-        if (message_edit.save(row) === true) {
+        if (message_edit.save(row, false) === true) {
             // Re-fetch the message row in case .save() re-rendered the message list
             message_edit.end($(this).closest(".message_row"));
         }
@@ -218,7 +218,7 @@ $(function () {
         narrow.deactivate();
         // We need to maybe scroll to the selected message
         // once we have the proper viewport set up
-        setTimeout(maybe_scroll_to_selected, 0);
+        setTimeout(navigate.maybe_scroll_to_selected, 0);
         e.preventDefault();
     });
 
@@ -229,13 +229,13 @@ $(function () {
         } else {
             narrow.restore_home_state();
         }
-        maybe_scroll_to_selected();
+        navigate.maybe_scroll_to_selected();
         e.preventDefault();
     });
 
     // MISC
 
-    $('#streams_header a').click(function (e) {
+    $('#streams_inline_cog').click(function (e) {
         ui.change_tab_to('#subscriptions');
 
         e.preventDefault();
@@ -274,10 +274,6 @@ $(function () {
     });
     $('.empty_feed_compose_private').click(function (e) {
         compose.start('private', {trigger: 'empty feed message'});
-        e.preventDefault();
-    });
-    $('.empty_feed_join').click(function (e) {
-        subs.show_and_focus_on_narrow();
         e.preventDefault();
     });
 
@@ -365,7 +361,7 @@ $(function () {
     });
 
     $('#yes-bankrupt').click(function (e) {
-        fast_forward_pointer();
+        pointer.fast_forward_pointer();
         $("#yes-bankrupt").hide();
         $("#no-bankrupt").hide();
         $(this).after($("<div>").addClass("alert alert-info settings_committed")

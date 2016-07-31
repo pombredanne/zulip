@@ -1,90 +1,58 @@
 from __future__ import absolute_import
 
+from django.utils.translation import ugettext as _
+from django.utils.timezone import now
 from django.conf import settings
 from django.core import validators
 from django.core.exceptions import ValidationError
 from django.db import connection
 from django.db.models import Q
+from django.http import HttpRequest, HttpResponse
+from six import text_type
+from typing import AnyStr, Iterable, Optional, Tuple
+from zerver.lib.str_utils import force_bytes
+
 from zerver.decorator import authenticated_api_view, authenticated_json_post_view, \
     has_request_variables, REQ, JsonableError, \
-    to_non_negative_int, to_non_negative_float
+    to_non_negative_int
 from django.utils.html import escape as escape_html
-from django.views.decorators.csrf import csrf_exempt
 from zerver.lib import bugdown
 from zerver.lib.actions import recipient_for_emails, do_update_message_flags, \
     compute_mit_user_fullname, compute_irc_user_fullname, compute_jabber_user_fullname, \
     create_mirror_user_if_needed, check_send_message, do_update_message, \
-    extract_recipients
+    extract_recipients, truncate_body
 from zerver.lib.cache import generic_bulk_cached_fetch
-from zerver.lib.query import last_n
 from zerver.lib.response import json_success, json_error
+from zerver.lib.sqlalchemy_utils import get_sqlalchemy_connection
 from zerver.lib.utils import statsd
 from zerver.lib.validator import \
     check_list, check_int, check_dict, check_string, check_bool
 from zerver.models import Message, UserProfile, Stream, Subscription, \
     Recipient, UserMessage, bulk_get_recipients, get_recipient, \
-    get_user_profile_by_email, get_stream, valid_stream_name, \
+    get_user_profile_by_email, get_stream, \
     parse_usermessage_flags, to_dict_cache_key_id, extract_message_dict, \
     stringify_message_dict, \
     resolve_email_to_domain, get_realm, get_active_streams, \
     bulk_get_streams
 
-import sqlalchemy
 from sqlalchemy import func
 from sqlalchemy.sql import select, join, column, literal_column, literal, and_, \
     or_, not_, union_all, alias
 
 import re
 import ujson
+import datetime
 
-from zerver.lib.rest import rest_dispatch as _rest_dispatch
 from six.moves import map
 import six
-rest_dispatch = csrf_exempt((lambda request, *args, **kwargs: _rest_dispatch(request, globals(), *args, **kwargs)))
 
-# This is a Pool that doesn't close connections.  Therefore it can be used with
-# existing Django database connections.
-class NonClosingPool(sqlalchemy.pool.NullPool):
-    def status(self):
-        return "NonClosingPool"
-
-    def _do_return_conn(self, conn):
-        pass
-
-    def recreate(self):
-        return self.__class__(creator=self._creator,
-                              recycle=self._recycle,
-                              use_threadlocal=self._use_threadlocal,
-                              reset_on_return=self._reset_on_return,
-                              echo=self.echo,
-                              logging_name=self._orig_logging_name,
-                              _dispatch=self.dispatch)
-
-sqlalchemy_engine = None
-def get_sqlalchemy_connection():
-    global sqlalchemy_engine
-    if sqlalchemy_engine is None:
-        def get_dj_conn():
-            connection.ensure_connection()
-            return connection.connection
-        sqlalchemy_engine = sqlalchemy.create_engine('postgresql://',
-                                                     creator=get_dj_conn,
-                                                     poolclass=NonClosingPool,
-                                                     pool_reset_on_return=False)
-    sa_connection = sqlalchemy_engine.connect()
-    sa_connection.execution_options(autocommit=False)
-    return sa_connection
-
-@authenticated_json_post_view
-def json_get_old_messages(request, user_profile):
-    return get_old_messages_backend(request, user_profile)
-
-class BadNarrowOperator(Exception):
-    def __init__(self, desc):
+class BadNarrowOperator(JsonableError):
+    def __init__(self, desc, status_code=400):
         self.desc = desc
+        self.status_code = status_code
 
     def to_json_error_msg(self):
-        return 'Invalid narrow operator: ' + self.desc
+        return _('Invalid narrow operator: {}').format(self.desc)
 
 # When you add a new operator to this, also update zerver/lib/narrow.py
 class NarrowBuilder(object):
@@ -174,7 +142,7 @@ class NarrowBuilder(object):
         if stream is None:
             raise BadNarrowOperator('unknown stream ' + operand)
 
-        if self.user_profile.realm.domain == "mit.edu":
+        if self.user_profile.realm.is_zephyr_mirror_realm:
             # MIT users expect narrowing to "social" to also show messages to /^(un)*social(.d)*$/
             # (unsocial, ununsocial, social.d, etc)
             m = re.search(r'^(?:un)*(.+?)(?:\.d)*$', stream.name, re.IGNORECASE)
@@ -186,8 +154,8 @@ class NarrowBuilder(object):
             matching_streams = get_active_streams(self.user_profile.realm).filter(
                 name__iregex=r'^(un)*%s(\.d)*$' % (self._pg_re_escape(base_stream_name),))
             matching_stream_ids = [matching_stream.id for matching_stream in matching_streams]
-            recipients = bulk_get_recipients(Recipient.STREAM, matching_stream_ids).values()
-            cond = column("recipient_id").in_([recipient.id for recipient in recipients])
+            recipients_map = bulk_get_recipients(Recipient.STREAM, matching_stream_ids)
+            cond = column("recipient_id").in_([recipient.id for recipient in recipients_map.values()])
             return query.where(maybe_negate(cond))
 
         recipient = get_recipient(Recipient.STREAM, type_id=stream.id)
@@ -195,7 +163,7 @@ class NarrowBuilder(object):
         return query.where(maybe_negate(cond))
 
     def by_topic(self, query, operand, maybe_negate):
-        if self.user_profile.realm.domain == "mit.edu":
+        if self.user_profile.realm.is_zephyr_mirror_realm:
             # MIT users expect narrowing to topic "foo" to also show messages to /^foo(.d)*$/
             # (foo, foo.d, foo.d.d, etc)
             m = re.search(r'^(.*?)(?:\.d)*$', operand, re.IGNORECASE)
@@ -292,14 +260,14 @@ class NarrowBuilder(object):
         cond = column("search_tsvector").op("@@")(tsquery)
         return query.where(maybe_negate(cond))
 
-def highlight_string(string, locs):
-    if isinstance(string, six.text_type):
-        string = string.encode('utf-8')
-
-    highlight_start = '<span class="highlight">'
-    highlight_stop = '</span>'
+def highlight_string(text, locs):
+    # type: (AnyStr, Iterable[Tuple[int, int]]) -> text_type
+    string = force_bytes(text)
+    # Do all operations on bytes because tsearch_extras counts bytes instead of characters.
+    highlight_start = b'<span class="highlight">'
+    highlight_stop = b'</span>'
     pos = 0
-    result = ''
+    result = b''
     for loc in locs:
         (offset, length) = loc
         result += string[pos:offset]
@@ -354,8 +322,16 @@ def narrow_parameter(json):
     return list(map(convert_term, data))
 
 def is_public_stream(stream, realm):
-    if not valid_stream_name(stream):
-        raise JsonableError("Invalid stream name")
+    """
+    Determine whether a stream is public, so that
+    our caller can decide whether we can get
+    historical messages for a narrowing search.
+
+    Because of the way our search is currently structured,
+    we may be passed an invalid stream here.  We return
+    False in that situation, and subsequent code will do
+    validation and raise the appropriate JsonableError.
+    """
     stream = get_stream(stream, realm)
     if stream is None:
         return False
@@ -419,9 +395,9 @@ def exclude_muting_conditions(user_profile, narrow):
         muted_streams = bulk_get_streams(user_profile.realm,
                                          [muted[0] for muted in muted_topics])
         muted_recipients = bulk_get_recipients(Recipient.STREAM,
-                                               [stream.id for stream in muted_streams.itervalues()])
+                                               [stream.id for stream in six.itervalues(muted_streams)])
         recipient_map = dict((s.name.lower(), muted_recipients[s.id].id)
-                             for s in muted_streams.itervalues())
+                             for s in six.itervalues(muted_streams))
 
         muted_topics = [m for m in muted_topics if m[0].lower() in recipient_map]
 
@@ -548,11 +524,11 @@ def get_old_messages_backend(request, user_profile,
     # 'user_messages' dictionary maps each message to the user's
     # UserMessage object for that message, which we will attach to the
     # rendered message dict before returning it.  We attempt to
-    # bulk-fetch rendered message dicts from memcached using the
+    # bulk-fetch rendered message dicts from remote cache using the
     # 'messages' list.
-    search_fields = dict()
-    message_ids = []
-    user_message_flags = {}
+    search_fields = dict() # type: Dict[int, Dict[str, text_type]]
+    message_ids = [] # type: List[int]
+    user_message_flags = {} # type: Dict[int, List[str]]
     if include_history:
         message_ids = [row[0] for row in query_result]
 
@@ -605,17 +581,40 @@ def get_old_messages_backend(request, user_profile,
            "msg": ""}
     return json_success(ret)
 
-@authenticated_json_post_view
-def json_update_flags(request, user_profile):
-    return update_message_flags(request, user_profile);
-
 @has_request_variables
 def update_message_flags(request, user_profile,
-                      messages=REQ('messages', validator=check_list(check_int)),
-                      operation=REQ('op'), flag=REQ('flag'),
-                      all=REQ('all', validator=check_bool, default=False)):
-    request._log_data["extra"] = "[%s %s]" % (operation, flag)
-    do_update_message_flags(user_profile, operation, flag, messages, all)
+                         messages=REQ(validator=check_list(check_int)),
+                         operation=REQ('op'), flag=REQ(),
+                         all=REQ(validator=check_bool, default=False),
+                         stream_name=REQ(default=None),
+                         topic_name=REQ(default=None)):
+    if all:
+        target_count_str = "all"
+    else:
+        target_count_str = str(len(messages))
+    log_data_str = "[%s %s/%s]" % (operation, flag, target_count_str)
+    request._log_data["extra"] = log_data_str
+    stream = None
+    if stream_name is not None:
+        stream = get_stream(stream_name, user_profile.realm)
+        if not stream:
+            raise JsonableError(_('No such stream \'%s\'') % (stream_name,))
+        if topic_name:
+            topic_exists = UserMessage.objects.filter(user_profile=user_profile,
+                                                      message__recipient__type_id=stream.id,
+                                                      message__recipient__type=Recipient.STREAM,
+                                                      message__subject__iexact=topic_name).exists()
+            if not topic_exists:
+                raise JsonableError(_('No such topic \'%s\'') % (topic_name,))
+    count = do_update_message_flags(user_profile, operation, flag, messages,
+                                    all, stream, topic_name)
+
+    # If we succeed, update log data str with the actual count for how
+    # many messages were updated.
+    if count != len(messages):
+        log_data_str = "[%s %s/%s] actually %s" % (operation, flag, target_count_str, count)
+    request._log_data["extra"] = log_data_str
+
     return json_success({'result': 'success',
                          'messages': messages,
                          'msg': ''})
@@ -656,10 +655,13 @@ def create_mirrored_message_users(request, user_profile, recipients):
     return (True, sender)
 
 def same_realm_zephyr_user(user_profile, email):
-    # Are the sender and recipient both @mit.edu addresses?
-    # We have to handle this specially, inferring the domain from the
-    # e-mail address, because the recipient may not existing in Zulip
-    # and we may need to make a stub MIT user on the fly.
+    # type: (UserProfile, text_type) -> bool
+    #
+    # Are the sender and recipient both addresses in the same Zephyr
+    # mirroring realm?  We have to handle this specially, inferring
+    # the domain from the e-mail address, because the recipient may
+    # not existing in Zulip and we may need to make a stub Zephyr
+    # mirroring user on the fly.
     try:
         validators.validate_email(email)
     except ValidationError:
@@ -667,9 +669,10 @@ def same_realm_zephyr_user(user_profile, email):
 
     domain = resolve_email_to_domain(email)
 
-    return user_profile.realm.domain == "mit.edu" and domain == "mit.edu"
+    return user_profile.realm.domain == domain and user_profile.realm.is_zephyr_mirror_realm
 
 def same_realm_irc_user(user_profile, email):
+    # type: (UserProfile, text_type) -> bool
     # Check whether the target email address is an IRC user in the
     # same realm as user_profile, i.e. if the domain were example.com,
     # the IRC user would need to be username@irc.example.com
@@ -683,6 +686,7 @@ def same_realm_irc_user(user_profile, email):
     return user_profile.realm.domain == domain.replace("irc.", "")
 
 def same_realm_jabber_user(user_profile, email):
+    # type: (UserProfile, text_type) -> bool
     try:
         validators.validate_email(email)
     except ValidationError:
@@ -697,12 +701,8 @@ def same_realm_jabber_user(user_profile, email):
     return user_profile.realm.domain == domain
 
 
-@authenticated_api_view
+@authenticated_api_view(is_webhook=False)
 def api_send_message(request, user_profile):
-    return send_message_backend(request, user_profile)
-
-@authenticated_json_post_view
-def json_send_message(request, user_profile):
     return send_message_backend(request, user_profile)
 
 # We do not @require_login for send_message_backend, since it is used
@@ -720,19 +720,19 @@ def send_message_backend(request, user_profile,
                          local_id = REQ(default=None),
                          queue_id = REQ(default=None)):
     client = request.client
-    is_super_user = request.user.is_api_super_user()
+    is_super_user = request.user.is_api_super_user
     if forged and not is_super_user:
-        return json_error("User not authorized for this query")
+        return json_error(_("User not authorized for this query"))
 
     realm = None
     if domain and domain != user_profile.realm.domain:
         if not is_super_user:
             # The email gateway bot needs to be able to send messages in
             # any realm.
-            return json_error("User not authorized for this query")
+            return json_error(_("User not authorized for this query"))
         realm = get_realm(domain)
         if not realm:
-            return json_error("Unknown domain " + domain)
+            return json_error(_("Unknown domain %s") % (domain,))
 
     if client.name in ["zephyr_mirror", "irc_mirror", "jabber_mirror", "JabberMirror"]:
         # Here's how security works for mirroring:
@@ -752,18 +752,18 @@ def send_message_backend(request, user_profile,
         # same-realm constraint) and recipient_for_emails (which
         # checks that PMs are received by the forwarding user)
         if "sender" not in request.POST:
-            return json_error("Missing sender")
+            return json_error(_("Missing sender"))
         if message_type_name != "private" and not is_super_user:
-            return json_error("User not authorized for this query")
+            return json_error(_("User not authorized for this query"))
         (valid_input, mirror_sender) = \
             create_mirrored_message_users(request, user_profile, message_to)
         if not valid_input:
-            return json_error("Invalid mirrored message")
-        if client.name == "zephyr_mirror" and user_profile.realm.domain != "mit.edu":
-            return json_error("Invalid mirrored realm")
+            return json_error(_("Invalid mirrored message"))
+        if client.name == "zephyr_mirror" and not user_profile.realm.is_zephyr_mirror_realm:
+            return json_error(_("Invalid mirrored realm"))
         if (client.name == "irc_mirror" and message_type_name != "private" and
             not message_to[0].startswith("#")):
-            return json_error("IRC stream names must start with #")
+            return json_error(_("IRC stream names must start with #"))
         sender = mirror_sender
     else:
         sender = user_profile
@@ -777,6 +777,7 @@ def send_message_backend(request, user_profile,
 
 @authenticated_json_post_view
 def json_update_message(request, user_profile):
+    # type: (HttpRequest, UserProfile) -> HttpResponse
     return update_message_backend(request, user_profile)
 
 @has_request_variables
@@ -785,27 +786,75 @@ def update_message_backend(request, user_profile,
                            subject=REQ(default=None),
                            propagate_mode=REQ(default="change_one"),
                            content=REQ(default=None)):
+    # type: (HttpRequest, UserProfile, int, Optional[text_type], Optional[str], Optional[text_type]) -> HttpResponse
+    if not user_profile.realm.allow_message_editing:
+        return json_error(_("Your organization has turned off message editing."))
+
+    try:
+        message = Message.objects.select_related().get(id=message_id)
+    except Message.DoesNotExist:
+        raise JsonableError(_("Unknown message id"))
+
+    # You only have permission to edit a message if:
+    # 1. You sent it, OR:
+    # 2. This is a topic-only edit for a (no topic) message, OR:
+    # 3. This is a topic-only edit and you are an admin.
+    if message.sender == user_profile:
+        pass
+    elif (content is None) and ((message.topic_name() == "(no topic)") or
+                                user_profile.is_realm_admin):
+        pass
+    else:
+        raise JsonableError(_("You don't have permission to edit this message"))
+
+    # If there is a change to the content, check that it hasn't been too long
+    # Allow an extra 20 seconds since we potentially allow editing 15 seconds
+    # past the limit, and in case there are network issues, etc. The 15 comes
+    # from (min_seconds_to_edit + seconds_left_buffer) in message_edit.js; if
+    # you change this value also change those two parameters in message_edit.js.
+    edit_limit_buffer = 20
+    if content is not None and user_profile.realm.message_content_edit_limit_seconds > 0:
+        deadline_seconds = user_profile.realm.message_content_edit_limit_seconds + edit_limit_buffer
+        if (now() - message.pub_date) > datetime.timedelta(seconds=deadline_seconds):
+            raise JsonableError(_("The time limit for editing this message has past"))
+
     if subject is None and content is None:
-        return json_error("Nothing to change")
-    do_update_message(user_profile, message_id, subject, propagate_mode, content)
+        return json_error(_("Nothing to change"))
+    if subject is not None:
+        subject = subject.strip()
+        if subject == "":
+            raise JsonableError(_("Topic can't be empty"))
+    rendered_content = None
+    if content is not None:
+        content = content.strip()
+        if content == "":
+            raise JsonableError(_("Content can't be empty"))
+        content = truncate_body(content)
+        rendered_content = message.render_markdown(content)
+        if not rendered_content:
+            raise JsonableError(_("We were unable to render your updated message"))
+
+    do_update_message(user_profile, message, subject, propagate_mode, content, rendered_content)
     return json_success()
 
 @authenticated_json_post_view
 @has_request_variables
 def json_fetch_raw_message(request, user_profile,
                            message_id=REQ(converter=to_non_negative_int)):
+    # type: (HttpRequest, UserProfile, int) -> HttpResponse
     try:
         message = Message.objects.get(id=message_id)
     except Message.DoesNotExist:
-        return json_error("No such message")
+        return json_error(_("No such message"))
 
     if message.sender != user_profile:
-        return json_error("Message was not sent by you")
+        return json_error(_("Message was not sent by you"))
 
     return json_success({"raw_content": message.content})
 
 @has_request_variables
-def render_message_backend(request, user_profile, content=REQ):
+def render_message_backend(request, user_profile, content=REQ()):
+    # type: (HttpRequest, UserProfile, text_type) -> HttpResponse
     rendered_content = bugdown.convert(content, user_profile.realm.domain)
     return json_success({"rendered": rendered_content})
 

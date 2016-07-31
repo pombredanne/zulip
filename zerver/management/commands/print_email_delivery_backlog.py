@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
 """
 Shows backlog count of ScheduledJobs of type Email
@@ -7,6 +7,7 @@ Shows backlog count of ScheduledJobs of type Email
 from __future__ import absolute_import
 from __future__ import print_function
 
+from typing import Any
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
@@ -21,11 +22,10 @@ class Command(BaseCommand):
 This is run as part of the nagios health check for the deliver_email command.
 Please note that this is only relevant to the SMTP-based email delivery (no Mandrill).
 
-Usage: python2.7 manage.py print_email_delivery_backlog
+Usage: python manage.py print_email_delivery_backlog
 """
 
     def handle(self, *args, **options):
+        # type: (*Any, **Any) -> None
         print(len(ScheduledJob.objects.filter(type=ScheduledJob.EMAIL,
                                                   scheduled_timestamp__lte=datetime.utcnow()-timedelta(minutes=1))))
-        return
-

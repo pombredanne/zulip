@@ -106,7 +106,7 @@ a {
 .app-main .column-right .right-sidebar {
     position: fixed;
     margin-top: 50px;
-    z-index:100;
+    z-index: 100;
 }
 
 .app-main .column-left .left-sidebar {
@@ -191,18 +191,18 @@ li,
     line-height: 18px;
     text-decoration: none;
     position: relative;
- }
+}
 
- .header-main .logoimage {
+.header-main .logoimage {
     height: 40px;
     width: auto;
 }
 
- #user-settings-avatar {
+#user-settings-avatar {
     width: 100px;
     height: 100px;
     margin-top: 10px;
- }
+}
 
 /* Classes for hiding and showing controls */
 
@@ -321,23 +321,33 @@ a:hover code {
     display: inline;
 }
 
-
-#streams_list:hover #streams_inline_cog {
-   visibility: visible;
-   opacity: 0.5;
+#message_edit_tooltip,
+#streams_inline_cog,
+#streams_filter_icon {
+    float: right;
+    color: #000;
+    font-size: 13px;
+    margin-top: 3px;
+    margin-left: 6px;
+    opacity: 0.5;
 }
 
-#streams_list #streams_inline_cog:hover {
+#message_edit_tooltip:hover,
+#streams_inline_cog:hover,
+#streams_filter_icon:hover {
    opacity: 1.0;
 }
 
-#streams_inline_cog {
-    float: right;
-    color: #000;
+.message-edit-tooltip-inner {
+    width: 200px;
+    position: absolute;
+    right: 7px;
+    top: -18px;
+}
+
+#streams_header a {
+    color: inherit;
     text-decoration: none;
-    visibility: hidden;
-    font-size: 13px;
-    margin-top: 3px;
 }
 
 .tooltip {
@@ -365,16 +375,23 @@ a:hover code {
     width: 4px !important;
 }
 
+.stream-list-filter {
+    margin-left: 1ex;
+}
+
 .narrow-filter {
     display: block;
     position: relative;
 }
 
-#stream_filters li:hover {
+#global_filters li:hover,
+#group-pms li:hover,
+#stream_filters li:hover,
+#user_presences li:hover {
     background-color: #e2e8dd;
 }
 
-#stream_filters li.active-subject-filter:hover {
+#stream_filters li.active-sub-filter:hover {
     background-color: #ccd6cc;
 }
 
@@ -386,10 +403,6 @@ a:hover code {
 
 #user_presences:hover, #group-pms:hover {
     overflow-y: auto;
-}
-
-#user_presences li:hover, #group-pms li:hover {
-    background-color: #e2e8dd;
 }
 
 #user_presences .user_sidebar_entry:hover, #group-pms .group-pms-sidebar-entry:hover {
@@ -483,8 +496,8 @@ ul.filters hr {
 }
 
 li.active-filter,
-li.active-subject-filter {
-    font-weight: 600;
+li.active-sub-filter {
+    font-weight: 600 !important;
     background: #ddedf6;
     position: relative;
 }
@@ -503,6 +516,11 @@ ul.filters {
     width: 18px;
     text-align: center;
     margin-right: 5px;
+}
+
+.stream-pin-icon {
+    margin-right: 4px !important;
+    margin-left: 3px;
 }
 
 #global_filters .global-filter {
@@ -606,6 +624,21 @@ ul.filters {
     letter-spacing: 0.6px;
 }
 
+.private_message_count {
+    display: block;
+    position: absolute;
+    line-height: 1em;
+    right: 10px;
+    top: 2px;
+    padding: 2px 3px 0px 3px;
+    background: #a6ada4;
+    color: #ffffff;
+    border-radius: 1px;
+    font-size: 12px;
+    font-weight: normal;
+    letter-spacing: 0.6px;
+}
+
 ul.filters i {
     padding-right: 0.25em;
     /* Make filter icons the same width so labels line up. */
@@ -662,7 +695,11 @@ ul.filters li.out_of_home_view {
     opacity: 0.25;
 }
 
-.message_list {
+ul.filters li.out_of_home_view li.muted_topic {
+    /* If stream is muted, this resets opacity of muted topics in muted
+       stream to 1; since opacity is multiplied down through child
+       elements, this avoids an unreadable opacity of 0.25^2. */
+    opacity: 1;
 }
 
 .message_area_padder {
@@ -710,6 +747,10 @@ td.pointer {
     position: static;
     padding: 0px;
     width: auto;
+}
+
+.sender-status .message_edit_notice {
+    line-height: 18px;
 }
 
 .message_edit_notice {
@@ -789,7 +830,7 @@ td.pointer {
     z-index: 0;
 }
 
- .message_list .recipient_row {
+.message_list .recipient_row {
     background: #f1f1f1;
     border-bottom: 1px solid #e2e2e2;
     margin-bottom: 10px;
@@ -865,7 +906,7 @@ td.pointer {
     line-height: 17px;
 }
 
-.summary_row .message_header{
+.summary_row .message_header {
     padding: 5px 0px 4px 5px;
 }
 
@@ -967,11 +1008,7 @@ just a temporary hack.
     background: none;
 }
 
-.compose_table .message_header_colorblock {
-    border-radius: 3px 0px 0px 3px;
-    border-bottom: 0px;
-}
-
+.compose_table .message_header_colorblock,
 .compose_table .message_header_colorblock.message_header_private_message {
     border-radius: 3px 0px 0px 3px;
     border-bottom: 0px;
@@ -1370,6 +1407,22 @@ div.focused_table {
     line-height: 18px;
 }
 
+.message_edit_countdown_timer {
+    text-align: right;
+    display: inline;
+    color: #a1a1a1;
+}
+
+.message_edit_tooltip {
+    display: inline;
+    color: #a1a1a1;
+}
+
+.message-edit-timer-control-group {
+    float: right;
+    display: none;
+}
+
 .topic_edit {
     display: none;
     line-height: 22px;
@@ -1394,7 +1447,7 @@ div.focused_table {
     border-color: #727d84;
 }
 
-.message_edit_topic_propagate{
+.message_edit_topic_propagate {
     display: inline-block;
     width: 400px;
 }
@@ -1587,6 +1640,7 @@ blockquote p {
     width: 10px;
 }
 
+.compose-all-everyone-controls,
 .compose_invite_user_controls {
     float: right;
 }
@@ -1789,7 +1843,7 @@ input.recipient_box {
     padding-top: 0px;
     overflow: hidden;
     text-overflow: ellipsis;
-    float:left;
+    float: left;
     letter-spacing: normal;
     height: 40px;
 }
@@ -1926,7 +1980,7 @@ input.recipient_box {
     width: 100%;
     top: 40px;
     height: 20px;
-    z-index:99;
+    z-index: 99;
 }
 
 
@@ -2113,12 +2167,12 @@ input.recipient_box {
     text-align: center;
     padding: 4px;
     color: #ccc;
-    font-size:18px;
+    font-size: 18px;
     box-shadow: none;
     -webkit-box-shadow: none;
     -moz-box-shadow: none;
     text-shadow: none;
-    z-index:5;
+    z-index: 5;
 }
 
 #searchbox .search_button:hover {
@@ -2198,14 +2252,14 @@ div.floating_recipient {
 }
 
 #bottom_whitespace {
-  display: block;
-  height: 300px;
- -webkit-touch-callout: none;
- -webkit-user-select: none;
- -khtml-user-select: none;
- -moz-user-select: none;
- -ms-user-select: none;
-  user-select: none;
+    display: block;
+    height: 300px;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
 }
 
 #home-error {
@@ -2245,6 +2299,15 @@ div.floating_recipient {
     display: inline-block;
 }
 
+.settings-section #default_language {
+    width: 150px;
+    margin-left: 20px !important;
+}
+
+.settings-section .inline {
+    display: inline !important;
+}
+
 
 .twitter-image, .message_inline_image {
     margin-bottom: 5px;
@@ -2271,9 +2334,6 @@ div.floating_recipient {
 
 .message_inline_image_title {
     font-weight: bold;
-}
-
-.message_inline_image_desc {
 }
 
 .popover {
@@ -2303,7 +2363,7 @@ div.floating_recipient {
 }
 
 .popover-left, .popover-right {
-    max-width: 175px;
+    max-width: 200px;
 }
 
 .hotkeys_table {
@@ -2402,6 +2462,7 @@ div.floating_recipient {
     vertical-align: middle;
 }
 
+.administration,
 .subscriptions {
     margin-top: 55px;
     padding-left: 15px;
@@ -2451,6 +2512,26 @@ div.floating_recipient {
     text-align: center;
 }
 
+#subscriptions-status {
+    position: fixed;
+    z-index: 999;
+    display: block;
+    left: 300px;
+    right: 300px;
+    margin: 0px auto;
+    opacity: 0.9 !important;
+    top: 55px;
+    max-width: 800px;
+}
+
+#close-subscriptions-status {
+    position: absolute;
+    top: 8px;
+    cursor: pointer;
+    font-size: 17px;
+    right: 8px;
+}
+
 .subject-name {
     display: block;
     line-height: 1.3em;
@@ -2458,6 +2539,13 @@ div.floating_recipient {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.conversation-partners {
+    display: block;
+    line-height: 1.2em;
+    width: 90%;
+    overflow: hidden;
 }
 
 .subscription_header {
@@ -2560,6 +2648,10 @@ div.floating_recipient {
     margin: 0 30px 5px 20px;
 }
 
+#user-checkboxes .checkbox {
+    display: block;
+}
+
 .muted-sub {
     color: #A3A3A3;
 }
@@ -2598,6 +2690,16 @@ div.floating_recipient {
     float: right;
     margin-top: 9px;
     margin-right: 10px;
+}
+
+.stream_sub_unsub_button {
+    min-width: 140px;
+    margin-top: 9px;
+    margin-right: 10px;
+}
+
+.sub_button_row {
+    text-align: center;
 }
 
 button.primary {
@@ -2773,6 +2875,16 @@ button.topic_edit_cancel {
     text-align: center;
 }
 
+#subscription-status {
+    width: 200px;
+    position: absolute;
+    left: 50%;
+    margin-left: -100px;
+    bottom: 30px;
+    text-align: center;
+    border-radius: 2px;
+}
+
 #empty_narrow_private_message p,
 #empty_narrow_message p {
     text-align: center;
@@ -2831,10 +2943,26 @@ ul.expanded_subjects {
     padding-bottom: 2px;
 }
 
+ul.expanded_private_messages {
+    list-style-type: none;
+    font-weight: 300;
+    font-size: 84%;
+    margin-left: 0px;
+    padding-bottom: 2px;
+}
+
 li.show-more-topics,
 li.expanded_subject {
     position: relative;
     padding-left: 33px;
+}
+
+li.show-more-private-messages,
+li.expanded_private_message {
+    position: relative;
+    padding-left: 24px;
+    padding-bottom: 1px;
+    padding-top: 2px;
 }
 
 .show-all-streams a {
@@ -2846,12 +2974,14 @@ li.expanded_subject {
     margin-bottom: -5px;
 }
 
-.expanded_subject .subject_box {
+.expanded_subject .subject_box,
+#private .expanded_private_message .subject_box {
     display: block;
     margin-right: 38px;
 }
 
-.expanded_subject.zero-subject-unreads .subject_box {
+.expanded_subject.zero-subject-unreads .subject_box,
+#private .expanded_private_messages.zero-subject-unreads .subject_box {
     display: block;
     margin-right: 15px;
 }
@@ -2936,7 +3066,7 @@ li.expanded_subject {
     vertical-align: middle;
     width: 33%;
     border-top: 1px solid #e2e2e2;
-    border-bottom:1px solid #fff;
+    border-bottom: 1px solid #fff;
     margin: 0px 5px 0px 5px;
 }
 
@@ -3040,173 +3170,6 @@ li.expanded_subject {
     opacity: .5;
 }
 
-#word-alerts {
-    list-style-type: none;
-
-    width: 300px;
-    margin: auto;
-}
-
-.alert-word-item {
-    padding: 8px;
-}
-
-#word-alerts li.alert-word-item:nth-child(odd) {
-    background: #fdfdfd;
-}
-
-#word-alerts li.alert-word-item:nth-child(even) {
-    background: #f9f9f9;
-}
-
-#word-alerts li.alert-word-item:first-child {
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-}
-
-#word-alerts li.alert-word-item:nth-last-child(2) {
-    border-bottom-left-radius: 6px;
-    border-bottom-right-radius: 6px;
-}
-
-#word-alerts li.alert-word-item:last-child {
-    background: none;
-    margin-top: 8px;
-}
-
-#word-alert-settings {
-    margin-top: 15px;
-    margin-bottom: 15px;
-}
-
-.remove-alert-word,
-.add-alert-word {
-    float: right;
-}
-
-input.edit-alert-word {
-    height: 12px;
-    line-height: 12px;
-    font-size: 1em;
-}
-
-input.edit-alert-word::-webkit-input-placeholder {
-    padding-top: 4px;
-}
-
-#bots_list {
-    display: none;
-    list-style-type: none;
-    margin-left: 0px;
-}
-
-#bots_list .image,
-#bots_list .bot_info {
-    display: inline-block;
-    margin: 10px;
-}
-
-#bots_list .image {
-    vertical-align: top;
-}
-
-#bots_list .name {
-    font-weight: 300;
-    font-size: 18px;
-    margin-bottom: 20px;
-}
-
-#bots_list .regenerate_bot_api_key {
-    padding: 2px;
-    width: 20px;
-    height: 20px;
-    background: #e3e3e3;
-    color: #666;
-    position: relative;
-    top: -2px;
-}
-
-#bots_list .regenerate_bot_api_key:hover {
-    color: #000;
-}
-
-
-#bots_list .edit-bot-buttons {
-    position: absolute;
-    right: 20px;
-    top: 20px;
-}
-
-.bot_info .field {
-    width: 6em;
-    font-weight: 300;
-    position: absolute;
-}
-
-.edit_bot_form {
-    font-size: 100%;
-}
-
-.edit_bot_email {
-    font-weight: 300;
-    font-size: 18px;
-    text-align: center;
-    margin-top: 10px;
-    margin-bottom: 10px;
-}
-
-div.edit_bot {
-    display: none;
-}
-
-.edit_bot_form .control-label,
-#create_bot_form .control-label {
-    width: 10em;
-    text-align: right;
-    margin-right: 20px;
-}
-
-#upload_avatar_spinner {
-    font-size: 14px;
-    margin: auto;
-}
-
-.user-avatar-section {
-    text-align: center;
-}
-
-.edit_bot_avatar_clear_button,
-#user_avatar_clear_button,
-#bot_avatar_clear_button {
-    display: none;
-}
-
-#create_bot_short_name {
-    width: 7em;
-}
-
-.bot_name_header {
-    width: 8em;
-}
-
-#bots_list img.avatar {
-    height: 35px;
-    width: 35px;
-}
-
-#bots_list .email .value,
-#bots_list .api_key .api-key-value-and-button {
-    display: block;
-    margin-left: 6em;
-    white-space: -moz-pre-wrap !important;
-    white-space: -pre-wrap;
-    white-space: -o-pre-wrap;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    word-break: break-all;
-    white-space: normal;
-}
-
 #feedback_section {
     text-align: left;
     padding-bottom: 10px;
@@ -3285,309 +3248,22 @@ div.edit_bot {
     background-color: #c9fcc1;
 }
 
-#settings {
-    margin-top: 55px;
-    margin-left: 15px;
-}
-
-#settings .settings-section {
-    background-color: #f1f1f1;
-    border: 1px solid #e3e3e3;
-    border-top: 6px solid #e3e3e3;
-    padding: 45px 0px 15px 0px;
-    margin-right: 5px;
-    position: relative;
-}
-
-#settings #notify-settings-status,#ui-settings-status,#display-settings-status {
-    width: 80%;
-    text-align: center;
-    margin: auto;
-    margin-top: 10px;
-    margin-bottom: 10px;
-}
-
-#settings .settings-section .account-settings-form,
-#settings .settings-section .new-bot-form,
-#settings .settings-section .edit-bot-form-box {
-    width: 400px;
-    margin: auto;
-}
-
-#settings .settings-section .new-bot-form,
-#settings .settings-section .edit-bot-form-box {
-    margin-top: 35px;
-}
-
-#settings .settings-section .new-bot-section-title {
-    top: 20px;
-    left: 20px;
-}
-
-#settings .settings-section .notification-settings-form,.ui-settings-form,.display-settings-form {
-    width: 400px;
-    margin: auto;
-}
-
-
-#settings .settings-section .account-settings-form .control-label,
-#settings .settings-section .new-bot-form .control-label,
-#settings .settings-section .edit-bot-form-box .control-label {
-    width: 120px;
-}
-
-#settings .settings-section .account-settings-form .controls,
-#settings .settings-section .new-bot-form .controls,
-#settings .settings-section .edit-bot-form-box .controls  {
-    margin-left: 140px;
-}
-
-#settings .settings-section .notification-settings-form .controls,
-#settings .settings-section .display-settings-form .controls,
-#settings .settings-section .ui-settings-form .controls {
-    display: inline-block;
-    vertical-align: middle;
-    margin: 0px;
-    margin-left: 110px;
-    padding-top: 0px;
-    padding-bottom: 0px;
-    line-height: 30px;
-    margin-right: 12px;
-}
-
-#settings .settings-section .display-settings-form .controls {
-    margin-left: 0;
-}
-
-#settings .settings-section .notification-settings-form .controls input[type='checkbox'],
-#settings .settings-section .display-settings-form .controls input[type='checkbox'],
-#settings .settings-section .ui-settings-form .controls input[type='checkbox'] {
-    margin: 0px;
-    padding: 0px;
-    vertical-align: middle;
-    position: relative;
-    top: -1px;
-}
-
-#settings .settings-section .notification-settings-form .control-label,
-#settings .settings-section .ui-settings-form .control-label,
-#settings .settings-section .display-settings-form .control-label {
-    float: none;
-    display: inline-block;
-    vertical-align: middle;
-    margin: 0px;
-    padding: 0px;
-    width:  240px;
-}
-
-#settings .settings-section .display-settings-form .control-label {
-    width:  360px;
-}
-
-#settings .settings-section .notification-settings-form .notification-submission,
-#settings .settings-section .ui-settings-form .ui-submission {
-    margin-left: 140px;
-}
-
-#settings .notification-settings-form .notification-settings-note,
-#settings .ui-settings-form .ui-settings-note {
-    margin-left: 110px;
-    width: 250px;
-    font-size: 13px;
-    line-height: 14px;
-    margin-top: 15px;
-    margin-bottom: 20px;
-}
-
-#settings .bot-settings-note {
-    margin-left: 38px;
-    font-size: 13px;
-}
-
-#settings .bot-information-box,
-#settings .add-new-bot-box {
-    background: #e3e3e3;
-    padding: 10px;
-    margin-left: 38px;
-    margin-right: 38px;
-    margin-bottom: 15px;
-    box-shadow: 0px 0px 2px rgba(0,0,0,0.5);
-    position: relative;
-    font-size: 14px;
-}
-
-#settings .add-new-bot-box {
-    background: #cbe3cb;
-}
-
-#settings #get_api_key_box,
-#settings #show_api_key_box,
-#settings #api_key_button_box .control-group {
-    text-align: center;
-}
-
-#settings #get_api_key_box .control-group {
-    margin: 0px;
-    width: 100%;
-}
-
-#settings #get_api_key_box .control-group .control-label {
-    float: none;
-    width: auto;
-    margin: 0px;
-    display: inline-block;
-    margin-right: 15px;
-}
-
-#settings #get_api_key_box .control-group input {
-    width: auto;
-    margin: 0px;
-    display: inline-block;
-}
-
-#settings #get_api_key_box .control-group .btn {
-    margin-top: 20px;
-}
-
-#settings .bot-information-box .email,
-#settings .bot-information-box .api_key {
-    position: relative;
-}
-
-#settings .bot-information-box .image {
-    overflow: hidden;
-}
-
-#settings .settings-section .api-key-note {
-    padding: 0px 20px 20px 20px;
-}
-
-@media (max-width: 580px) {
-
-
-#settings .settings-section .new-bot-form .control-label,
-#settings .settings-section .edit-bot-form-box .control-label {
-    float: left;
-    width: 120px;
-    padding-top: 0;
-    text-align: right;
-}
-
-#settings .settings-section .new-bot-form .controls {
-    margin-left: 110px;
-}
-
-}
-
-@media (max-width: 480px) {
-
-#pw_strength {
-    margin: auto;
-}
-
-#settings .settings-section .account-settings-form,
-#settings .settings-section .new-bot-form,
-#settings .settings-section .notification-settings-form,
-#settings .settings-section .display-settings-form,
-#settings .settings-section .edit-bot-form-box {
-    width: 100%;
-}
-
-#settings .settings-section .account-settings-form .control-label,
-#settings .settings-section .new-bot-form .control-label,
-#settings .settings-section .edit-bot-form-box .control-label {
-    display: block;
-    width: 120px;
-    padding: 0px;
-    padding-top: 0;
-    text-align: center;
-    margin: auto;
-    float: none;
-}
-
-#settings .settings-section .account-settings-form .controls,
-#settings .settings-section .new-bot-form .controls,
-#settings .settings-section .edit-bot-form-box .controls {
-    margin: auto;
-    text-align: center;
-}
-
-#settings .settings-section .account-settings-form .controls button,
-#settings .settings-section .account-settings-form .controls input,
-#settings .settings-section .new-bot-form .controls button,
-#settings .settings-section .edit-bot-form-box .controls button,
-#settings .settings-section .new-bot-form .controls input,
-#settings .settings-section .edit-bot-form-box .controls input {
-    margin: auto;
-}
-
-#settings .settings-section .new-bot-form {
-    padding: 0px;
-    width: 100%;
-    text-align: center;
-}
-
-#settings .settings-section .notification-settings-form .controls,
-#settings .notification-settings-form .notification-settings-note {
-    margin-left: 80px;
-}
-
-#settings .settings-section .notification-settings-form .notification-submission {
-    margin: 0px;
-    width: 100%;
-    text-align: center;
-}
-
-}
-
-#settings .settings-section .settings-section-title {
-    font-size: 18px;
-    font-weight: 300;
-    position: absolute;
-    left: 12px;
-    top: 15px;
-}
-
-#settings .settings-section .settings-section-icon {
-    margin-right: 8px;
-}
-
+#administration h1,
 #settings h1,
 #subscriptions h1 {
     font-size: 25px;
     font-weight: 300;
 }
 
+#subscriptions h1 {
+    padding-top: 40px;
+}
+
+#administration .administration-icon,
 #settings .settings-icon,
 #subscriptions .streams-icon {
     margin-right: 10px;
     font-size: 20px;
-}
-
-#settings #notification-settings {
-    margin-top: 15px;
-}
-
-#notification-settings .notification-reminder {
-    text-align: center;
-}
-
-#notification-docs {
-    color: #666666;
-    font-size: 11px;
-    position: relative;
-    top: -6px;
-}
-
-#notification-docs:hover {
-    color: #111111;
-}
-
-#settings-status {
-    text-align: center;
-    width: 50%;
-    margin: auto;
-    margin-bottom: 20px;
 }
 
 #home {
@@ -3636,31 +3312,9 @@ div.edit_bot {
     right: 0px;
 }
 
-#home .alert-bar .close-alert-icon:hover{
+#home .alert-bar .close-alert-icon:hover {
     opacity: 0.7;
     cursor: pointer;
-}
-
-#notification-settings .control-group,
-#ui-settings .control-group {
-    margin-bottom: 5px;
-}
-
-#notification-settings .control-label,
-#ui-settings .control-label {
-    width: 280px;
-    text-align: left;
-}
-
-form.admin-realm .control-label {
-    width: 200px;
-    padding-top: 3px;
-    padding-right: 20px;
-    margin-bottom: -20px;
-}
-
-.control-label-disabled {
-    color: #d3d3d3;
 }
 
 .zero_count {
@@ -3688,6 +3342,14 @@ form.admin-realm .control-label {
 }
 .tutorial-done-button {
     text-align: right;
+    margin-top: 9px;
+    margin-bottom: 8px;
+}
+
+.btn-skip {
+    position: relative;
+    left: -10px;
+    margin-right: 25px;
 }
 
 #share-the-love {
@@ -3845,6 +3507,11 @@ form.admin-realm .control-label {
         margin-right: 7px;
     }
 
+    #subscriptions-status {
+        left: 300px;
+        right: 50px;
+    }
+
 }
 
 @media (max-width: 775px) {
@@ -3915,7 +3582,7 @@ form.admin-realm .control-label {
     }
 
     .compose-content {
-        margin-right:7px;
+        margin-right: 7px;
         margin-left: 7px;
     }
 
@@ -3929,6 +3596,10 @@ form.admin-realm .control-label {
 
     .navbar-search {
         margin-right: 81px;
+    }
+
+    #subscriptions-status {
+        left: 35px;
     }
 
 }
@@ -3964,16 +3635,19 @@ form.admin-realm .control-label {
     display: none;
 }
 
-.administration {
-    margin-top: 55px;
-    padding-left: 15px;
-}
-
 li.show-more-topics a {
     font-size: 75%;
 }
 
+li.show-more-private-messages a {
+    font-size: 90%
+}
+
 .zoom-in .show-more-topics {
+    display: none;
+}
+
+.zoom-in .show-more-private-messages {
     display: none;
 }
 
@@ -3994,7 +3668,8 @@ li.show-more-topics a {
     display: none;
 }
 
-.user-list-filter {
+.user-list-filter ,
+.add-user-list-filter {
     width: 80%;
 }
 

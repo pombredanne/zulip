@@ -10,7 +10,7 @@ function go_to_row(row) {
 }
 
 exports.up = function () {
-    last_viewport_movement_direction = -1;
+    viewport.last_movement_direction = -1;
     var next_row = rows.prev_visible(current_msg_list.selected_row());
     if (next_row.length !== 0) {
         go_to_row(next_row);
@@ -18,7 +18,7 @@ exports.up = function () {
 };
 
 exports.down = function (with_centering) {
-    last_viewport_movement_direction = 1;
+    viewport.last_movement_direction = 1;
     var next_row = rows.next_visible(current_msg_list.selected_row());
     if (next_row.length !== 0) {
         go_to_row(next_row);
@@ -36,7 +36,7 @@ exports.down = function (with_centering) {
 };
 
 exports.to_home = function () {
-    last_viewport_movement_direction = -1;
+    viewport.last_movement_direction = -1;
     var next_row = rows.first_visible(current_msg_list.selected_row());
     if (next_row.length !== 0) {
         go_to_row(next_row);
@@ -45,7 +45,7 @@ exports.to_home = function () {
 
 exports.to_end = function () {
     var next_id = current_msg_list.last().id;
-    last_viewport_movement_direction = 1;
+    viewport.last_movement_direction = 1;
     current_msg_list.select_id(next_id, {then_scroll: true,
                                          from_scroll: true});
     unread.mark_current_list_as_read();
@@ -54,8 +54,7 @@ exports.to_end = function () {
 exports.page_up = function () {
     if (viewport.at_top() && !current_msg_list.empty()) {
         current_msg_list.select_id(current_msg_list.first().id, {then_scroll: false});
-    }
-    else {
+    } else {
         ui.page_up_the_right_amount();
     }
 };
@@ -64,8 +63,7 @@ exports.page_down = function () {
     if (viewport.at_bottom() && !current_msg_list.empty()) {
         current_msg_list.select_id(current_msg_list.last().id, {then_scroll: false});
         unread.mark_current_list_as_read();
-    }
-    else {
+    } else {
         ui.page_down_the_right_amount();
     }
 };
@@ -101,6 +99,26 @@ exports.cycle_stream = function (direction) {
     }
     narrow.by('stream', nextStream.data('name'));
 };
+
+exports.scroll_to_selected = function () {
+    var selected_row = current_msg_list.selected_row();
+    if (selected_row && (selected_row.length !== 0)) {
+        viewport.recenter_view(selected_row);
+    }
+};
+
+
+exports.maybe_scroll_to_selected = function () {
+    // If we have been previously instructed to re-center to the
+    // selected message, then do so
+    if (pointer.recenter_pointer_on_display) {
+        exports.scroll_to_selected();
+        pointer.recenter_pointer_on_display = false;
+    }
+};
+
+
+
 
 return exports;
 }());

@@ -171,19 +171,19 @@
     {
       "name": "many_emoji",
       "input":  "test :smile: again :poop:\n:) foo:)bar x::y::z :wasted waste: :fakeemojithisshouldnotrender:",
-      "expected_output": "<p>test <img alt=\":smile:\" class=\"emoji\" src=\"static/third/gemoji/images/emoji/smile.png\" title=\":smile:\"> again <img alt=\":poop:\" class=\"emoji\" src=\"static/third/gemoji/images/emoji/poop.png\" title=\":poop:\"><br>\n:) foo:)bar x::y::z :wasted waste: :fakeemojithisshouldnotrender:</p>",
+      "expected_output": "<p>test <img alt=\":smile:\" class=\"emoji\" src=\"/static/third/gemoji/images/emoji/smile.png\" title=\":smile:\"> again <img alt=\":poop:\" class=\"emoji\" src=\"/static/third/gemoji/images/emoji/poop.png\" title=\":poop:\"><br>\n:) foo:)bar x::y::z :wasted waste: :fakeemojithisshouldnotrender:</p>",
       "bugdown_matches_marked": true
     },
     {
       "name": "random_emoji_1",
       "input": ":hankey:",
-      "expected_output": "<p><img alt=\":hankey:\" class=\"emoji\" src=\"static/third/gemoji/images/emoji/hankey.png\" title=\":hankey:\"></p>",
+      "expected_output": "<p><img alt=\":hankey:\" class=\"emoji\" src=\"/static/third/gemoji/images/emoji/hankey.png\" title=\":hankey:\"></p>",
       "bugdown_matches_marked": true
     },
     {
       "name": "random_emoji_2",
       "input": ":poop:",
-      "expected_output": "<p><img alt=\":poop:\" class=\"emoji\" src=\"static/third/gemoji/images/emoji/poop.png\" title=\":poop:\"></p>",
+      "expected_output": "<p><img alt=\":poop:\" class=\"emoji\" src=\"/static/third/gemoji/images/emoji/poop.png\" title=\":poop:\"></p>",
       "bugdown_matches_marked": true
     },
     {
@@ -193,9 +193,27 @@
       "bugdown_matches_marked": true
     },
     {
+      "name": "unicode_emoji",
+      "input": "\ud83d\udca9",
+      "expected_output":"<p><img alt=\"\ud83d\udca9\" class=\"emoji\" src=\"\/static\/third\/gemoji\/images\/emoji\/unicode\/1f4a9.png\" title=\"\ud83d\udca9\"><\/p>",
+      "bugdown_matches_marked": true
+    },
+    {
+      "name": "two_unicode_emoji",
+      "input": "\ud83d\udca9\ud83d\udca9",
+      "expected_output":"<p><img alt=\"\ud83d\udca9\" class=\"emoji\" src=\"\/static\/third\/gemoji\/images\/emoji\/unicode\/1f4a9.png\" title=\"\ud83d\udca9\"><img alt=\"\ud83d\udca9\" class=\"emoji\" src=\"\/static\/third\/gemoji\/images\/emoji\/unicode\/1f4a9.png\" title=\"\ud83d\udca9\"><\/p>",
+      "bugdown_matches_marked": true
+    },
+    {
+      "name": "two_unicode_emoji_separated_by_text",
+      "input": "\ud83d\udca9 word \ud83d\udca9",
+      "expected_output":"<p><img alt=\"\ud83d\udca9\" class=\"emoji\" src=\"\/static\/third\/gemoji\/images\/emoji\/unicode\/1f4a9.png\" title=\"\ud83d\udca9\"> word <img alt=\"\ud83d\udca9\" class=\"emoji\" src=\"\/static\/third\/gemoji\/images\/emoji\/unicode\/1f4a9.png\" title=\"\ud83d\udca9\"><\/p>",
+      "bugdown_matches_marked": true
+    },
+    {
       "name": "emoji_alongside_punctuation",
       "input": ":smile:, :smile:; :smile:",
-      "expected_output": "<p><img alt=\":smile:\" class=\"emoji\" src=\"static/third/gemoji/images/emoji/smile.png\" title=\":smile:\">, <img alt=\":smile:\" class=\"emoji\" src=\"static/third/gemoji/images/emoji/smile.png\" title=\":smile:\">; <img alt=\":smile:\" class=\"emoji\" src=\"static/third/gemoji/images/emoji/smile.png\" title=\":smile:\"></p>",
+      "expected_output": "<p><img alt=\":smile:\" class=\"emoji\" src=\"/static/third/gemoji/images/emoji/smile.png\" title=\":smile:\">, <img alt=\":smile:\" class=\"emoji\" src=\"/static/third/gemoji/images/emoji/smile.png\" title=\":smile:\">; <img alt=\":smile:\" class=\"emoji\" src=\"/static/third/gemoji/images/emoji/smile.png\" title=\":smile:\"></p>",
       "bugdown_matches_marked": true
     },
     {

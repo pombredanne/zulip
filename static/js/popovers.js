@@ -56,7 +56,7 @@ exports.toggle_actions_popover = function (element, id) {
     var elt = $(element);
     if (elt.data('popover') === undefined) {
         var message = current_msg_list.get(id);
-        var can_edit = message.sent_by_me && message.local_id === undefined && !feature_flags.disable_message_editing;
+        var can_edit = message.sent_by_me && message.local_id === undefined && page_params.realm_allow_message_editing;
         var can_mute_topic =
                 message.stream &&
                 message.subject &&
@@ -117,11 +117,9 @@ exports.actions_menu_handle_keyboard = function (key) {
     }
     if (index === -1) {
         index = 0;
-    }
-    else if ((key === 'down_arrow' || key === 'vim_down') && index < items.length - 1) {
+    } else if ((key === 'down_arrow' || key === 'vim_down') && index < items.length - 1) {
         ++index;
-    }
-    else if ((key === 'up_arrow' || key === 'vim_up') && index > 0) {
+    } else if ((key === 'up_arrow' || key === 'vim_up') && index > 0) {
         --index;
     }
     items.eq(index).focus();
@@ -157,12 +155,21 @@ exports.hide_streamlist_sidebar = function () {
     $(".app-main .column-left").removeClass("expanded");
 };
 
+exports.hide_pm_list_sidebar = function () {
+    $(".app-main .column-left").removeClass("expanded");
+};
+
 exports.show_userlist_sidebar = function () {
     $(".app-main .column-right").addClass("expanded");
     resize.resize_page_components();
 };
 
 exports.show_streamlist_sidebar = function () {
+    $(".app-main .column-left").addClass("expanded");
+    resize.resize_page_components();
+};
+
+exports.show_pm_list_sidebar = function () {
     $(".app-main .column-left").addClass("expanded");
     resize.resize_page_components();
 };
@@ -374,6 +381,13 @@ exports.register_click_handlers = function () {
         e.preventDefault();
     });
 
+    $('body').on('click', '.sidebar-popover-mark-topic-read', function (e) {
+        var topic = $(e.currentTarget).attr('data-topic-name');
+        var stream = $(e.currentTarget).attr('data-stream-name');
+        popovers.hide_topic_sidebar_popover();
+        unread.mark_topic_as_read(stream,topic);
+        e.stopPropagation();
+    });
 
     $('#stream_filters').on('click', '.stream-sidebar-arrow', function (e) {
         var elt = e.target;
@@ -445,13 +459,13 @@ exports.register_click_handlers = function () {
     });
 
     $('body').on('click', '.respond_button', function (e) {
-        respond_to_message({trigger: 'popover respond'});
+        compose.respond_to_message({trigger: 'popover respond'});
         popovers.hide_actions_popover();
         e.stopPropagation();
         e.preventDefault();
     });
     $('body').on('click', '.respond_personal_button', function (e) {
-        respond_to_message({reply_type: 'personal', trigger: 'popover respond pm'});
+        compose.respond_to_message({reply_type: 'personal', trigger: 'popover respond pm'});
         popovers.hide_all();
         e.stopPropagation();
         e.preventDefault();
@@ -471,31 +485,19 @@ exports.register_click_handlers = function () {
         e.preventDefault();
     });
     $('body').on('click', '.popover_toggle_collapse', function (e) {
-        var home_row;
         var msgid = $(e.currentTarget).data('msgid');
         var row = current_msg_list.get_row(msgid);
         var message = current_msg_list.get(rows.id(row));
 
-        // If we are narrowed we also need to collapse this message in the home
-        // view.
-        if (current_msg_list === narrowed_msg_list) {
-            home_row = home_msg_list.get_row(msgid);
-        }
+        popovers.hide_actions_popover();
 
-        var toggle_row = function toggle_row(row) {
-            if (!row) { return; }
-
+        if (row) {
             if (message.collapsed) {
                 condense.uncollapse(row);
             } else {
                 condense.collapse(row);
             }
-        };
-
-        popovers.hide_actions_popover();
-
-        toggle_row(row);
-        toggle_row(home_row);
+        }
 
         e.stopPropagation();
         e.preventDefault();
@@ -547,6 +549,20 @@ exports.register_click_handlers = function () {
         var stream = $(e.currentTarget).parents('ul').attr('data-name');
         popovers.hide_stream_sidebar_popover();
         compose.start('stream', {"stream": stream, trigger: 'sidebar stream actions'});
+        e.stopPropagation();
+    });
+
+    $('body').on('click', '.mark_stream_as_read', function (e) {
+        var stream = $(e.currentTarget).parents('ul').attr('data-name');
+        popovers.hide_stream_sidebar_popover();
+        unread.mark_stream_as_read(stream);
+        e.stopPropagation();
+    });
+
+    $('body').on('click', '.pin_to_top', function (e) {
+        var stream = $(e.currentTarget).parents('ul').attr('data-name');
+        popovers.hide_stream_sidebar_popover();
+        subs.toggle_pin_to_top_stream(stream);
         e.stopPropagation();
     });
 

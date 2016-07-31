@@ -1,6 +1,18 @@
 add_dependencies({
     Handlebars: 'handlebars',
-    templates: 'js/templates'
+    templates: 'js/templates',
+    i18n: 'i18next'
+});
+
+var i18n = global.i18n;
+i18n.init({
+    nsSeparator: false,
+    keySeparator: false,
+    interpolation: {
+        prefix: "__",
+        suffix: "__"
+    },
+    lng: 'en'
 });
 
 global.$ = require('jQuery');
@@ -57,7 +69,57 @@ function render(template_name, args) {
     html += "</div>";
     var link = $(html).find("a.respond_button");
     assert.equal(link.text().trim(), 'Reply');
-    global.write_test_output("actions_popover_content.handlebars", html);
+    global.write_handlebars_output("actions_popover_content", html);
+}());
+
+(function admin_default_streams_list() {
+    var html = '<table>';
+    var streams = ['devel', 'trac', 'zulip'];
+    _.each(streams, function (stream) {
+        var args = {stream: {name: stream, invite_only: false}};
+        html += render('admin_default_streams_list', args);
+    });
+    html += "</table>";
+    var span = $(html).find(".default_stream_name:first");
+    assert.equal(span.text(), "devel");
+    global.write_handlebars_output("admin_default_streams_list", html);
+}());
+
+(function admin_emoji_list() {
+    global.use_template('admin_emoji_list');
+    var args = {
+        emoji: {
+            "name": "MouseFace",
+            "display_url": "http://emojipedia-us.s3.amazonaws.com/cache/46/7f/467fe69069c408e07517621f263ea9b5.png",
+            "source_url": "http://emojipedia-us.s3.amazonaws.com/cache/46/7f/467fe69069c408e07517621f263ea9b5.png"
+        }
+    };
+
+    var html = '';
+    html += '<tbody id="admin_emoji_table">';
+    html += render('admin_emoji_list', args);
+    html += '</tbody>';
+
+    global.write_handlebars_output('admin_emoji_list', html);
+
+    var emoji_name = $(html).find('tr.emoji_row:first span.emoji_name');
+    var emoji_url = $(html).find('tr.emoji_row:first span.emoji_image img');
+
+    assert.equal(emoji_name.text(), 'MouseFace');
+    assert.equal(emoji_url.attr('src'), 'http://emojipedia-us.s3.amazonaws.com/cache/46/7f/467fe69069c408e07517621f263ea9b5.png');
+}());
+
+(function admin_streams_list() {
+    var html = '<table>';
+    var streams = ['devel', 'trac', 'zulip'];
+    _.each(streams, function (stream) {
+        var args = {stream: {name: stream, invite_only: false}};
+        html += render('admin_streams_list', args);
+    });
+    html += "</table>";
+    var span = $(html).find(".stream_name:first");
+    assert.equal(span.text(), "devel");
+    global.write_handlebars_output("admin_streams_list", html);
 }());
 
 (function admin_tab() {
@@ -71,20 +133,7 @@ function render(template_name, args) {
         assert.notEqual($(html).find("#" + admin_feature).length, 0);
     });
     assert.equal($(html).find("input.admin-realm-name").val(), 'Zulip');
-    global.write_test_output("admin_tab.handlebars", html);
-}());
-
-(function admin_streams_list() {
-    var html = '<table>';
-    var streams = ['devel', 'trac', 'zulip'];
-    _.each(streams, function (stream) {
-        var args = {stream: {name: stream, invite_only: false}};
-        html += render('admin_streams_list', args);
-    });
-    html += "</table>";
-    var span = $(html).find(".stream_name:first");
-    assert.equal(span.text(), "devel");
-    global.write_test_output("admin_streams_list.handlebars", html);
+    global.write_handlebars_output("admin_tab", html);
 }());
 
 (function admin_user_list() {
@@ -111,11 +160,11 @@ function render(template_name, args) {
     assert.equal(button.text().trim(), "Make admin");
     assert(button.hasClass("make-admin"));
 
-    global.write_test_output("admin_user_list.handlebars", html);
+    global.write_handlebars_output("admin_user_list", html);
 }());
 
 (function alert_word_settings_item() {
-    var html = '<ul id="word-alerts">';
+    var html = '<ul id="alert-words">';
     var words = ['lunch', 'support'];
     _.each(words, function (word) {
         var args = {
@@ -124,14 +173,14 @@ function render(template_name, args) {
         html += render('alert_word_settings_item', args);
     });
     html += "</ul>";
-    global.write_test_output("alert_word_settings_item.handlebars", html);
+    global.write_handlebars_output("alert_word_settings_item", html);
     var li = $(html).find("li.alert-word-item:first");
     assert.equal(li.attr('data-word'),'lunch');
 }());
 
 (function announce_stream_docs() {
     var html = render('announce_stream_docs');
-    global.write_test_output("announce_stream_docs.handlebars", html);
+    global.write_handlebars_output("announce_stream_docs", html);
 }());
 
 (function bankruptcy_modal() {
@@ -139,9 +188,40 @@ function render(template_name, args) {
         unread_count: 99
     };
     var html = render('bankruptcy_modal', args);
-    global.write_test_output("bankruptcy_modal.handlebars", html);
+    global.write_handlebars_output("bankruptcy_modal", html);
     var count = $(html).find("p b");
     assert.equal(count.text(), 99);
+}());
+
+(function bookend() {
+    // Do subscribed/unsubscribed cases here.
+    var args = {
+        bookend_content: "subscribed to stream",
+        trailing: true,
+        subscribed: true
+    };
+    var html;
+    var all_html = '';
+
+    html = render('bookend', args);
+
+    assert.equal($(html).text().trim(), "subscribed to stream\n    \n        \n            \n            Unsubscribe");
+
+    all_html += html;
+
+    args = {
+        bookend_content: "Not subscribed to stream",
+        trailing: true,
+        subscribed: false
+    };
+
+    html = render('bookend', args);
+    assert.equal($(html).text().trim(), 'Not subscribed to stream\n    \n        \n            \n            Subscribe');
+
+    all_html += '<hr />';
+    all_html += html;
+
+    global.write_handlebars_output("bookend", all_html);
 }());
 
 (function bot_avatar_row() {
@@ -162,7 +242,7 @@ function render(template_name, args) {
     html += '</div>';
     html += '</div>';
 
-    global.write_test_output("bot_avatar_row.handlebars", html);
+    global.write_handlebars_output("bot_avatar_row", html);
     var img = $(html).find("img");
     assert.equal(img.attr('src'), '/hamlet/avatar/url');
 }());
@@ -173,9 +253,22 @@ function render(template_name, args) {
         name: 'Hamlet'
     };
     var html = render('compose-invite-users', args);
-    global.write_test_output("compose-invite-users.handlebars", html);
+    global.write_handlebars_output("compose-invite-users", html);
     var button = $(html).find("button:first");
     assert.equal(button.text(), "Subscribe");
+}());
+
+(function compose_all_everyone() {
+    var args = {
+        count: '101',
+        name: 'all'
+    };
+    var html = render('compose_all_everyone', args);
+    global.write_handlebars_output("compose_all_everyone", html);
+    var button = $(html).find("button:first");
+    assert.equal(button.text(), "YES");
+    var error_msg = $(html).find('span.compose-all-everyone-msg').text().trim();
+    assert.equal(error_msg, "Are you sure you want to message all 101 people in this stream?");
 }());
 
 (function compose_notification() {
@@ -188,14 +281,14 @@ function render(template_name, args) {
     var html = '<div  id="out-of-view-notification" class="notification-alert">';
     html += render('compose_notification', args);
     html += '</div>';
-    global.write_test_output("compose_notification.handlebars", html);
+    global.write_handlebars_output("compose_notification", html);
     var a = $(html).find("a.compose_notification_narrow_by_subject");
     assert.equal(a.text(), "Narrow to here");
 }());
 
 (function email_address_hint() {
     var html = render('email_address_hint');
-    global.write_test_output("email_address_hint.handlebars", html);
+    global.write_handlebars_output("email_address_hint", html);
     var li = $(html).find("li:first");
     assert.equal(li.text(), 'The email will be forwarded to this stream');
 }());
@@ -212,7 +305,7 @@ function render(template_name, args) {
         ]
     };
     var html = render('group_pms', args);
-    global.write_test_output("group_pms.handlebars", html);
+    global.write_handlebars_output("group_pms", html);
 
     var a = $(html).find("a:first");
     assert.equal(a.text(), 'Alice and Bob');
@@ -230,7 +323,7 @@ function render(template_name, args) {
         ]
     };
     var html = render('invite_subscription', args);
-    global.write_test_output("invite_subscription.handlebars", html);
+    global.write_handlebars_output("invite_subscription", html);
 
     var input = $(html).find("label:first");
     assert.equal(input.text().trim(), "devel");
@@ -252,7 +345,7 @@ function render(template_name, args) {
     var html = render('single_message', message);
     html = '<div class="message_table focused_table" id="zfilt">' + html + '</div>';
 
-    global.write_test_output("message.handlebars", html);
+    global.write_handlebars_output("message", html);
 
     var first_message = $(html).find("div.messagebox:first");
 
@@ -261,6 +354,19 @@ function render(template_name, args) {
 
     var starred_title = first_message.find(".star span").attr("title");
     assert.equal(starred_title, "Unstar this message");
+}());
+
+(function message_edit_form() {
+    var args = {
+        "topic": "lunch",
+        "content": "Let's go to lunch!",
+        "is_stream": true
+    };
+    var html = render('message_edit_form', args);
+    global.write_handlebars_output("message_edit_form", html);
+
+    var textarea = $(html).find("textarea.message_edit_content");
+    assert.equal(textarea.text(), "Let's go to lunch!");
 }());
 
 (function message_group() {
@@ -315,20 +421,7 @@ function render(template_name, args) {
     var highlighted_subject_word = $(html).find('a.narrows_by_subject .highlight').text();
     assert.equal(highlighted_subject_word, 'two');
 
-    global.write_test_output("message_group.handlebars", html);
-}());
-
-(function message_edit_form() {
-    var args = {
-        "topic": "lunch",
-        "content": "Let's go to lunch!",
-        "is_stream": true
-    };
-    var html = render('message_edit_form', args);
-    global.write_test_output("message_edit_form.handlebars", html);
-
-    var textarea = $(html).find("textarea.message_edit_content");
-    assert.equal(textarea.text(), "Let's go to lunch!");
+    global.write_handlebars_output("message_group", html);
 }());
 
 (function message_info_popover_content() {
@@ -344,7 +437,7 @@ function render(template_name, args) {
     };
 
     var html = render('message_info_popover_content', args);
-    global.write_test_output("message_info_popover_content.handlebars", html);
+    global.write_handlebars_output("message_info_popover_content", html);
 
     var a = $(html).find("a.respond_personal_button");
     assert.equal(a.text().trim(), 'Send Alice Smith a private message');
@@ -360,7 +453,7 @@ function render(template_name, args) {
     };
 
     var html = render('message_info_popover_title', args);
-    global.write_test_output("message_info_popover_title.handlebars", html);
+    global.write_handlebars_output("message_info_popover_title", html);
 
     assert($(html).text().trim(), "Message to stream devel");
 }());
@@ -380,7 +473,7 @@ function render(template_name, args) {
     };
 
     var html = render('new_stream_users', args);
-    global.write_test_output("new_stream_users.handlebars", html);
+    global.write_handlebars_output("new_stream_users", html);
 
     var label = $(html).find("label:first");
     assert.equal(label.text().trim(), 'King Lear (lear@zulip.com)');
@@ -394,10 +487,62 @@ function render(template_name, args) {
     };
 
     var html = render('notification', args);
-    global.write_test_output("notification.handlebars", html);
+    global.write_handlebars_output("notification", html);
 
     var title = $(html).find(".title");
     assert.equal(title.text().trim(), 'You have a notification');
+}());
+
+(function propagate_notification_change() {
+    var html = render('propagate_notification_change');
+    global.write_handlebars_output("propagate_notification_change", html);
+
+    var button_area = $(html).find(".propagate-notifications-controls");
+    assert.equal(button_area.find(".yes_propagate_notifications").text().trim(), 'Yes');
+    assert.equal(button_area.find(".no_propagate_notifications").text().trim(), 'No');
+}());
+
+(function settings_tab() {
+    var page_param_checkbox_options = {
+        stream_desktop_notifications_enabled: true,
+        stream_sounds_enabled: true, desktop_notifications_enabled: true,
+        sounds_enabled: true, enable_offline_email_notifications: true,
+        enable_offline_push_notifications: true, enable_digest_emails: true,
+        autoscroll_forever: true, default_desktop_notifications: true
+    };
+    var page_params = $.extend(page_param_checkbox_options, {
+        fullname: "Alyssa P. Hacker", password_auth_enabled: true,
+        avatar_url: "https://google.com",
+        domain: "zulip.com"
+    });
+
+    var checkbox_ids = ["enable_stream_desktop_notifications",
+                        "enable_stream_sounds", "enable_desktop_notifications",
+                        "enable_sounds", "enable_offline_push_notifications",
+                        "enable_digest_emails", "autoscroll_forever",
+                        "default_desktop_notifications"];
+
+    // Render with all booleans set to true.
+    var html = render('settings_tab', {page_params: page_params});
+    global.write_handlebars_output("settings_tab", html);
+
+    // All checkboxes should be checked.
+    _.each(checkbox_ids, function (checkbox) {
+        assert.equal($(html).find("#" + checkbox).is(":checked"), true);
+    });
+
+    // Re-render with checkbox booleans set to false.
+    _.each(page_param_checkbox_options, function (value, option) {
+        page_params[option] = false;
+    });
+
+    html = render('settings_tab', {page_params: page_params});
+
+    // All checkboxes should be unchecked.
+    _.each(checkbox_ids, function (checkbox) {
+        assert.equal($(html).find("#" + checkbox).is(":checked"), false);
+    });
+
 }());
 
 (function sidebar_subject_list() {
@@ -428,7 +573,7 @@ function render(template_name, args) {
     html += '</li>';
     html += '</ul>';
 
-    global.write_test_output("sidebar_subject_list.handlebars", html);
+    global.write_handlebars_output("sidebar_subject_list", html);
 
     var li = $(html).find("li.expanded_subject:first");
     assert.equal(li.attr('data-name'), 'lunch');
@@ -459,7 +604,7 @@ function render(template_name, args) {
         assert.equal($(html).find("." + item).length, 1);
     });
 
-    global.write_test_output("stream_member_list_entry.handlebars", html);
+    global.write_handlebars_output("stream_member_list_entry", html);
 }());
 
 (function stream_sidebar_actions() {
@@ -473,7 +618,7 @@ function render(template_name, args) {
     };
 
     var html = render('stream_sidebar_actions', args);
-    global.write_test_output("stream_sidebar_actions.handlebars", html);
+    global.write_handlebars_output("stream_sidebar_actions", html);
 
     var li = $(html).find("li:first");
     assert.equal(li.text().trim(), 'Narrow to stream devel');
@@ -492,7 +637,7 @@ function render(template_name, args) {
     html += render('stream_sidebar_row', args);
     html += '</ul>';
 
-    global.write_test_output("stream_sidebar_row.handlebars", html);
+    global.write_handlebars_output("stream_sidebar_row", html);
 
     var swatch = $(html).find(".streamlist_swatch");
     assert.equal(swatch.attr('id'), 'stream_sidebar_swatch_999');
@@ -533,7 +678,7 @@ function render(template_name, args) {
     html += render('subscription_table_body', args);
     html += '</div>';
 
-    global.write_test_output("subscription_table_body.handlebars", html);
+    global.write_handlebars_output("subscription_table_body", html);
 
     var span = $(html).find(".subscription_name:first");
     assert.equal(span.text(), 'devel');
@@ -566,7 +711,7 @@ function render(template_name, args) {
 
     var html = render('tab_bar', args);
 
-    global.write_test_output("tab_bar.handlebars", html);
+    global.write_handlebars_output("tab_bar", html);
 
     var a = $(html).find("li:first");
     assert.equal(a.text().trim(), 'Home');
@@ -575,7 +720,7 @@ function render(template_name, args) {
 (function topic_edit_form() {
     var html = render('topic_edit_form');
 
-    global.write_test_output("topic_edit_form.handlebars", html);
+    global.write_handlebars_output("topic_edit_form", html);
 
     var button = $(html).find("button:first");
     assert.equal(button.find("i").attr("class"), 'icon-vector-ok');
@@ -589,24 +734,11 @@ function render(template_name, args) {
     };
     var html = render('topic_sidebar_actions', args);
 
-    global.write_test_output("topic_sidebar_actions.handlebars", html);
+    global.write_handlebars_output("topic_sidebar_actions", html);
 
     var a = $(html).find("a.narrow_to_topic");
     assert.equal(a.text().trim(), 'Narrow to topic lunch');
 
-}());
-
-(function trailing_bookend() {
-    var args = {
-        bookend_content: "subscribed to stream",
-        trailing: true
-    };
-    var html = '';
-    html += render('bookend', args);
-
-    global.write_test_output("bookend.handlebars", html);
-
-    assert.equal($(html).text().trim(), 'subscribed to stream');
 }());
 
 (function tutorial() {
@@ -625,11 +757,12 @@ function render(template_name, args) {
             title: 'Title'
         };
         html = render(tutorial, args);
-        global.write_test_output(tutorial + '.handlebars', html);
+        global.write_handlebars_output(tutorial, html);
     });
 }());
 
 (function user_presence_rows() {
+    global.use_template('user_presence_row'); // partial
     var args = {
         users: [
             {
@@ -655,7 +788,7 @@ function render(template_name, args) {
     html += render('user_presence_rows', args);
     html += '</ul>';
 
-    global.write_test_output("user_presence_rows.handlebars", html);
+    global.write_handlebars_output("user_presence_rows", html);
 
     var a = $(html).find("a.my_fullname:first");
     assert.equal(a.text(), 'King Lear');
@@ -669,62 +802,10 @@ function render(template_name, args) {
 
     var html = render('user_sidebar_actions', args);
 
-    global.write_test_output("user_sidebar_actions.handlebars", html);
+    global.write_handlebars_output("user_sidebar_actions", html);
 
     var a = $(html).find("a.narrow_to_private_messages");
     assert.equal(a.text().trim(), 'Narrow to private messages with Hamlet');
-}());
-
-(function notification_docs() {
-    var html = render('propagate_notification_change');
-    global.write_test_output("propagate_notification_change.handlebars", html);
-
-    var button_area = $(html).find(".propagate-notifications-controls");
-    assert.equal(button_area.find(".yes_propagate_notifications").text().trim(), 'Yes');
-    assert.equal(button_area.find(".no_propagate_notifications").text().trim(), 'No');
-}());
-
-(function settings_tab() {
-    var page_param_checkbox_options = {
-        stream_desktop_notifications_enabled: true,
-        stream_sounds_enabled: true, desktop_notifications_enabled: true,
-        sounds_enabled: true, enable_offline_email_notifications: true,
-        enable_offline_push_notifications: true, enable_digest_emails: true,
-        autoscroll_forever: true, default_desktop_notifications: true
-    };
-    var page_params = $.extend(page_param_checkbox_options, {
-        fullname: "Alyssa P. Hacker", password_auth_enabled: true,
-        avatar_url: "https://google.com",
-        domain: "zulip.com"
-    });
-
-    var checkbox_ids = ["enable_stream_desktop_notifications",
-                        "enable_stream_sounds", "enable_desktop_notifications",
-                        "enable_sounds", "enable_offline_push_notifications",
-                        "enable_digest_emails", "autoscroll_forever",
-                        "default_desktop_notifications"];
-
-    // Render with all booleans set to true.
-    var html = render('settings_tab', {page_params: page_params});
-    global.write_test_output("settings_tab.handlebars", html);
-
-    // All checkboxes should be checked.
-    _.each(checkbox_ids, function (checkbox) {
-        assert.equal($(html).find("#" + checkbox).is(":checked"), true);
-    });
-
-    // Re-render with checkbox booleans set to false.
-    _.each(page_param_checkbox_options, function (value, option) {
-        page_params[option] = false;
-    });
-
-    html = render('settings_tab', {page_params: page_params});
-
-    // All checkboxes should be unchecked.
-    _.each(checkbox_ids, function (checkbox) {
-        assert.equal($(html).find("#" + checkbox).is(":checked"), false);
-    });
-
 }());
 
 // By the end of this test, we should have compiled all our templates.  Ideally,

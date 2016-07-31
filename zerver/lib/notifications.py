@@ -1,27 +1,43 @@
 from __future__ import print_function
+
+from six import text_type
+from typing import cast, Any, Iterable, Mapping, Optional, Sequence, Tuple
+
+import mandrill
 from confirmation.models import Confirmation
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template import loader
 from zerver.decorator import statsd_increment, uses_mandrill
-from zerver.models import Recipient, ScheduledJob, UserMessage, \
-    Stream, get_display_recipient, get_user_profile_by_email, \
-    get_user_profile_by_id, receives_offline_notifications, \
-    get_context_for_message
+from zerver.models import (
+    Recipient,
+    ScheduledJob,
+    UserMessage,
+    Stream,
+    get_display_recipient,
+    UserProfile,
+    get_user_profile_by_email,
+    get_user_profile_by_id,
+    receives_offline_notifications,
+    get_context_for_message,
+    Message
+)
 
 import datetime
 import re
 import subprocess
 import ujson
-import urllib
+from six.moves import urllib
 from collections import defaultdict
 
 def unsubscribe_token(user_profile):
+    # type: (UserProfile) -> text_type
     # Leverage the Django confirmations framework to generate and track unique
     # unsubscription tokens.
     return Confirmation.objects.get_link_for_object(user_profile).split("/")[-1]
 
 def one_click_unsubscribe_link(user_profile, endpoint):
+    # type: (UserProfile, text_type) -> text_type
     """
     Generate a unique link that a logged-out user can visit to unsubscribe from
     Zulip e-mails without having to first log in.
@@ -32,41 +48,48 @@ def one_click_unsubscribe_link(user_profile, endpoint):
     return "%s/%s" % (base_url.rstrip("/"), resource_path)
 
 def hashchange_encode(string):
+    # type: (text_type) -> text_type
     # Do the same encoding operation as hashchange.encodeHashComponent on the
     # frontend.
     # `safe` has a default value of "/", but we want those encoded, too.
-    return urllib.quote(
-        string.encode("utf-8"), safe="").replace(".", "%2E").replace("%", ".")
+    return urllib.parse.quote(
+        string.encode("utf-8"), safe=b"").replace(".", "%2E").replace("%", ".")
 
 def pm_narrow_url(participants):
+    # type: (List[text_type]) -> text_type
     participants.sort()
-    base_url = "https://%s/#narrow/pm-with/" % (settings.EXTERNAL_HOST,)
+    base_url = u"https://%s/#narrow/pm-with/" % (settings.EXTERNAL_HOST,)
     return base_url + hashchange_encode(",".join(participants))
 
 def stream_narrow_url(stream):
-    base_url = "https://%s/#narrow/stream/" % (settings.EXTERNAL_HOST,)
+    # type: (text_type) -> text_type
+    base_url = u"https://%s/#narrow/stream/" % (settings.EXTERNAL_HOST,)
     return base_url + hashchange_encode(stream)
 
 def topic_narrow_url(stream, topic):
-    base_url = "https://%s/#narrow/stream/" % (settings.EXTERNAL_HOST,)
-    return "%s%s/topic/%s" % (base_url, hashchange_encode(stream),
+    # type: (text_type, text_type) -> text_type
+    base_url = u"https://%s/#narrow/stream/" % (settings.EXTERNAL_HOST,)
+    return u"%s%s/topic/%s" % (base_url, hashchange_encode(stream),
                               hashchange_encode(topic))
 
 def build_message_list(user_profile, messages):
+    # type: (UserProfile, List[Message]) -> List[Dict[str, Any]]
     """
     Builds the message list object for the missed message email template.
     The messages are collapsed into per-recipient and per-sender blocks, like
     our web interface
     """
-    messages_to_render = []
+    messages_to_render = [] # type: List[Dict[str, Any]]
 
     def sender_string(message):
-        sender = ''
+        # type: (Message) -> text_type
         if message.recipient.type in (Recipient.STREAM, Recipient.HUDDLE):
-            sender = message.sender.full_name
-        return sender
+            return message.sender.full_name
+        else:
+            return ''
 
     def relative_to_full_url(content):
+        # type: (text_type) -> text_type
         # URLs for uploaded content are of the form
         # "/user_uploads/abc.png". Make them full paths.
         #
@@ -92,15 +115,18 @@ def build_message_list(user_profile, messages):
         return content
 
     def fix_plaintext_image_urls(content):
+        # type: (text_type) -> text_type
         # Replace image URLs in plaintext content of the form
         #     [image name](image url)
         # with a simple hyperlink.
         return re.sub(r"\[(\S*)\]\((\S*)\)", r"\2", content)
 
     def fix_emoji_sizes(html):
+        # type: (text_type) -> text_type
         return html.replace(' class="emoji"', ' height="20px"')
 
     def build_message_payload(message):
+        # type: (Message) -> Dict[str, text_type]
         plain = message.content
         plain = fix_plaintext_image_urls(plain)
         plain = relative_to_full_url(plain)
@@ -112,28 +138,32 @@ def build_message_list(user_profile, messages):
         return {'plain': plain, 'html': html}
 
     def build_sender_payload(message):
+        # type: (Message) -> Dict[str, Any]
         sender = sender_string(message)
         return {'sender': sender,
                 'content': [build_message_payload(message)]}
 
     def message_header(user_profile, message):
+        # type: (UserProfile, Message) -> Dict[str, Any]
         disp_recipient = get_display_recipient(message.recipient)
         if message.recipient.type == Recipient.PERSONAL:
-            header = "You and %s" % (message.sender.full_name)
+            header = u"You and %s" % (message.sender.full_name)
             html_link = pm_narrow_url([message.sender.email])
-            header_html = "<a style='color: #ffffff;' href='%s'>%s</a>" % (html_link, header)
+            header_html = u"<a style='color: #ffffff;' href='%s'>%s</a>" % (html_link, header)
         elif message.recipient.type == Recipient.HUDDLE:
+            assert not isinstance(disp_recipient, text_type)
             other_recipients = [r['full_name'] for r in disp_recipient
                                     if r['email'] != user_profile.email]
-            header = "You and %s" % (", ".join(other_recipients),)
+            header = u"You and %s" % (", ".join(other_recipients),)
             html_link = pm_narrow_url([r["email"] for r in disp_recipient
                                        if r["email"] != user_profile.email])
-            header_html = "<a style='color: #ffffff;' href='%s'>%s</a>" % (html_link, header)
+            header_html = u"<a style='color: #ffffff;' href='%s'>%s</a>" % (html_link, header)
         else:
-            header = "%s > %s" % (disp_recipient, message.subject)
+            assert isinstance(disp_recipient, text_type)
+            header = u"%s > %s" % (disp_recipient, message.topic_name())
             stream_link = stream_narrow_url(disp_recipient)
             topic_link = topic_narrow_url(disp_recipient, message.subject)
-            header_html = "<a href='%s'>%s</a> > <a href='%s'>%s</a>" % (
+            header_html = u"<a href='%s'>%s</a> > <a href='%s'>%s</a>" % (
                 stream_link, disp_recipient, topic_link, message.subject)
         return {"plain": header,
                 "html": header_html,
@@ -191,6 +221,7 @@ def build_message_list(user_profile, messages):
 
 @statsd_increment("missed_message_reminders")
 def do_send_missedmessage_events_reply_in_zulip(user_profile, missed_messages, message_count):
+    # type: (UserProfile, List[Message], int) -> None
     """
     Send a reminder email to a user if she's missed some PMs by being offline.
 
@@ -235,69 +266,12 @@ def do_send_missedmessage_events_reply_in_zulip(user_profile, missed_messages, m
     plural_messages = 's' if len(missed_messages) > 1 else ''
 
     subject = "Missed Zulip%s from %s" % (plural_messages, sender_str)
-    from_email = "%s (via Zulip) <%s>" % (sender_str, settings.NOREPLY_EMAIL_ADDRESS)
-
-    text_content = loader.render_to_string('zerver/missed_message_email.txt', template_payload)
-    html_content = loader.render_to_string('zerver/missed_message_email_html.txt', template_payload)
-
-    msg = EmailMultiAlternatives(subject, text_content, from_email, [user_profile.email],
-                                 headers = headers)
-    msg.attach_alternative(html_content, "text/html")
-    msg.send()
-
-    user_profile.last_reminder = datetime.datetime.now()
-    user_profile.save(update_fields=['last_reminder'])
-
-@statsd_increment("missed_message_reminders")
-def do_send_missedmessage_events(user_profile, missed_messages, message_count):
-    """
-    Send a reminder email and/or push notifications to a user if she's missed some PMs by being offline
-
-    `user_profile` is the user to send the reminder to
-    `missed_messages` is a list of Message objects to remind about
-    """
-    # Disabled missedmessage emails internally
-    if not user_profile.enable_offline_email_notifications:
-        return
-
-    senders = set(m.sender.full_name for m in missed_messages)
-    sender_str = ", ".join(senders)
-    plural_messages = 's' if len(missed_messages) > 1 else ''
-    template_payload = {'name': user_profile.full_name,
-                        'messages': build_message_list(user_profile, missed_messages),
-                        'message_count': message_count,
-                        'url': 'https://%s' % (settings.EXTERNAL_HOST,),
-                        'reply_warning': False,
-                        'external_host': settings.EXTERNAL_HOST}
-    headers = {}
-    if all(msg.recipient.type in (Recipient.HUDDLE, Recipient.PERSONAL)
-            for msg in missed_messages):
-        # If we have one huddle, set a reply-to to all of the members
-        # of the huddle except the user herself
-        disp_recipients = [", ".join(recipient['email']
-                                for recipient in get_display_recipient(mesg.recipient)
-                                    if recipient['email'] != user_profile.email)
-                                 for mesg in missed_messages]
-        if all(msg.recipient.type == Recipient.HUDDLE for msg in missed_messages) and \
-            len(set(disp_recipients)) == 1:
-            headers['Reply-To'] = disp_recipients[0]
-        elif len(senders) == 1:
-            headers['Reply-To'] = missed_messages[0].sender.email
-        else:
-            template_payload['reply_warning'] = True
+    if len(senders) > 1:
+        from_email = "%s (via Zulip) <%s>" % (sender_str, settings.NOREPLY_EMAIL_ADDRESS)
     else:
-        # There are some @-mentions mixed in with personals
-        template_payload['mention'] = True
-        template_payload['reply_warning'] = True
-        headers['Reply-To'] = "Nobody <%s>" % (settings.NOREPLY_EMAIL_ADDRESS,)
-
-    # Give users a one-click unsubscribe link they can use to stop getting
-    # missed message emails without having to log in first.
-    unsubscribe_link = one_click_unsubscribe_link(user_profile, "missed_messages")
-    template_payload["unsubscribe_link"] = unsubscribe_link
-
-    subject = "Missed Zulip%s from %s" % (plural_messages, sender_str)
-    from_email = "%s (via Zulip) <%s>" % (sender_str, settings.NOREPLY_EMAIL_ADDRESS)
+        sender = missed_messages[0].sender
+        from_email = "%s <%s>" % (sender_str, sender.email)
+        headers['Sender'] = "Zulip <%s>" % (settings.NOREPLY_EMAIL_ADDRESS,)
 
     text_content = loader.render_to_string('zerver/missed_message_email.txt', template_payload)
     html_content = loader.render_to_string('zerver/missed_message_email_html.txt', template_payload)
@@ -309,9 +283,9 @@ def do_send_missedmessage_events(user_profile, missed_messages, message_count):
 
     user_profile.last_reminder = datetime.datetime.now()
     user_profile.save(update_fields=['last_reminder'])
-
 
 def handle_missedmessage_emails(user_profile_id, missed_email_events):
+    # type: (int, Iterable[Dict[str, Any]]) -> None
     message_ids = [event.get('message_id') for event in missed_email_events]
 
     user_profile = get_user_profile_by_id(user_profile_id)
@@ -324,11 +298,11 @@ def handle_missedmessage_emails(user_profile_id, missed_email_events):
     if not messages:
         return
 
-    messages_by_recipient_subject = defaultdict(list)
+    messages_by_recipient_subject = defaultdict(list) # type: Dict[Tuple[int, text_type], List[Message]]
     for msg in messages:
-        messages_by_recipient_subject[(msg.recipient_id, msg.subject)].append(msg)
+        messages_by_recipient_subject[(msg.recipient_id, msg.topic_name())].append(msg)
 
-    mesage_count_by_recipient_subject = {
+    message_count_by_recipient_subject = {
         recipient_subject: len(msgs)
         for recipient_subject, msgs in messages_by_recipient_subject.items()
     }
@@ -339,29 +313,17 @@ def handle_missedmessage_emails(user_profile_id, missed_email_events):
             msg_list.extend(get_context_for_message(msg))
 
     # Send an email per recipient subject pair
-    if user_profile.realm.domain == 'zulip.com':
-        for recipient_subject, msg_list in messages_by_recipient_subject.items():
-            unique_messages = {m.id: m for m in msg_list}
-            do_send_missedmessage_events_reply_in_zulip(
-                user_profile,
-                unique_messages.values(),
-                mesage_count_by_recipient_subject[recipient_subject],
-            )
-    else:
-        all_messages = [
-            msg_
-            for msg_list in messages_by_recipient_subject.values()
-            for msg_ in msg_list
-        ]
-        unique_messages = {m.id: m for m in all_messages}
-        do_send_missedmessage_events(
+    for recipient_subject, msg_list in messages_by_recipient_subject.items():
+        unique_messages = {m.id: m for m in msg_list}
+        do_send_missedmessage_events_reply_in_zulip(
             user_profile,
-            unique_messages.values(),
-            len(messages),
+            list(unique_messages.values()),
+            message_count_by_recipient_subject[recipient_subject],
         )
 
 @uses_mandrill
 def clear_followup_emails_queue(email, mail_client=None):
+    # type: (text_type, Optional[mandrill.Mandrill]) -> None
     """
     Clear out queued emails (from Mandrill's queue) that would otherwise
     be sent to a specific email address. Optionally specify which sender
@@ -379,13 +341,14 @@ def clear_followup_emails_queue(email, mail_client=None):
         return
 
     # Mandrill implementation
-    for email in mail_client.messages.list_scheduled(to=email):
-        result = mail_client.messages.cancel_scheduled(id=email["_id"])
+    for email_message in mail_client.messages.list_scheduled(to=email):
+        result = mail_client.messages.cancel_scheduled(id=email_message["_id"])
         if result.get("status") == "error":
             print(result.get("name"), result.get("error"))
     return
 
 def log_digest_event(msg):
+    # type: (text_type) -> None
     import logging
     logging.basicConfig(filename=settings.DIGEST_LOG_PATH, level=logging.INFO)
     logging.info(msg)
@@ -394,6 +357,7 @@ def log_digest_event(msg):
 def send_future_email(recipients, email_html, email_text, subject,
                       delay=datetime.timedelta(0), sender=None,
                       tags=[], mail_client=None):
+    # type: (List[Dict[str, Any]], text_type, text_type, text_type, datetime.timedelta, Optional[Dict[str, text_type]], Iterable[text_type], Optional[mandrill.Mandrill]) -> None
     """
     Sends email via Mandrill, with optional delay
 
@@ -481,39 +445,42 @@ def send_future_email(recipients, email_html, email_text, subject,
 def send_local_email_template_with_delay(recipients, template_prefix,
                                          template_payload, delay,
                                          tags=[], sender={'email': settings.NOREPLY_EMAIL_ADDRESS, 'name': 'Zulip'}):
+    # type: (List[Dict[str, Any]], text_type, Dict[str, text_type], datetime.timedelta, Iterable[text_type], Dict[str, text_type]) -> None
     html_content = loader.render_to_string(template_prefix + ".html", template_payload)
     text_content = loader.render_to_string(template_prefix + ".text", template_payload)
     subject = loader.render_to_string(template_prefix + ".subject", template_payload).strip()
 
-    return send_future_email(recipients,
-                             html_content,
-                             text_content,
-                             subject,
-                             delay=delay,
-                             sender=sender,
-                             tags=tags)
+    send_future_email(recipients,
+                      html_content,
+                      text_content,
+                      subject,
+                      delay=delay,
+                      sender=sender,
+                      tags=tags)
 
 def enqueue_welcome_emails(email, name):
-    sender = {'email': 'wdaher@zulip.com', 'name': 'Waseem Daher'}
-    if settings.VOYAGER:
+    # type: (text_type, text_type) -> None
+    if settings.WELCOME_EMAIL_SENDER is not None:
+        sender = settings.WELCOME_EMAIL_SENDER # type: Dict[str, text_type]
+    else:
         sender = {'email': settings.ZULIP_ADMINISTRATOR, 'name': 'Zulip'}
 
     user_profile = get_user_profile_by_email(email)
     unsubscribe_link = one_click_unsubscribe_link(user_profile, "welcome")
 
     template_payload = {'name': name,
-                        'not_voyager': not settings.VOYAGER,
+                        'verbose_support_offers': settings.VERBOSE_SUPPORT_OFFERS,
                         'external_host': settings.EXTERNAL_HOST,
                         'unsubscribe_link': unsubscribe_link}
 
-    #Send day 1 email
+    # Send day 1 email
     send_local_email_template_with_delay([{'email': email, 'name': name}],
                                          "zerver/emails/followup/day1",
                                          template_payload,
                                          datetime.timedelta(hours=1),
                                          tags=["followup-emails"],
                                          sender=sender)
-    #Send day 2 email
+    # Send day 2 email
     tomorrow = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
     # 11 AM EDT
     tomorrow_morning = datetime.datetime(tomorrow.year, tomorrow.month, tomorrow.day, 15, 0)
@@ -526,6 +493,7 @@ def enqueue_welcome_emails(email, name):
                                          sender=sender)
 
 def convert_html_to_markdown(html):
+    # type: (text_type) -> text_type
     # On Linux, the tool installs as html2markdown, and there's a command called
     # html2text that does something totally different. On OSX, the tool installs
     # as html2text.
@@ -541,11 +509,11 @@ def convert_html_to_markdown(html):
         except OSError:
             continue
 
-    markdown = p.communicate(input=html.encode("utf-8"))[0].strip()
+    markdown = p.communicate(input=html.encode('utf-8'))[0].decode('utf-8').strip()
     # We want images to get linked and inline previewed, but html2text will turn
     # them into links of the form `![](http://foo.com/image.png)`, which is
     # ugly. Run a regex over the resulting description, turning links of the
     # form `![](http://foo.com/image.png?12345)` into
     # `[image.png](http://foo.com/image.png)`.
-    return re.sub(r"!\[\]\((\S*)/(\S*)\?(\S*)\)",
-                  r"[\2](\1/\2)", markdown).decode("utf-8")
+    return re.sub(u"!\\[\\]\\((\\S*)/(\\S*)\\?(\\S*)\\)",
+                  u"[\\2](\\1/\\2)", markdown)

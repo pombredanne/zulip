@@ -1,4 +1,5 @@
 from __future__ import absolute_import
+from __future__ import division
 from __future__ import print_function
 
 from django.core.management.base import BaseCommand
@@ -10,7 +11,8 @@ from zerver.models import Message, UserProfile, Stream, Recipient, Client, \
     get_huddle_hash, clear_database, get_client, get_user_profile_by_id, \
     split_email_to_domain, email_to_username
 from zerver.lib.actions import do_send_message, set_default_streams, \
-    do_activate_user, do_deactivate_user, do_change_password, do_change_is_admin
+    do_activate_user, do_deactivate_user, do_change_password, do_change_is_admin,\
+    do_change_bot_type
 from zerver.lib.parallel import run_parallel
 from django.db.models import Count
 from django.conf import settings
@@ -28,19 +30,23 @@ import random
 import glob
 import os
 from optparse import make_option
+from six import text_type
 from six.moves import range
+from typing import Any, Callable, Dict, List, Iterable, Mapping, Sequence, Set, Tuple
 
 settings.TORNADO_SERVER = None
 
-def create_users(realms, name_list, bot=False):
-    user_set = set()
+def create_users(realms, name_list, bot_type=None):
+    # type: (Mapping[text_type, Realm], Iterable[Tuple[text_type, text_type]], int) -> None
+    user_set = set() # type: Set[Tuple[text_type, text_type, text_type, bool]]
     for full_name, email in name_list:
         short_name = email_to_username(email)
         user_set.add((email, full_name, short_name, True))
-    bulk_create_users(realms, user_set, bot)
+    bulk_create_users(realms, user_set, bot_type)
 
 def create_streams(realms, realm, stream_list):
-    stream_set = set()
+    # type: (Mapping[text_type, Realm], Realm, Iterable[text_type]) -> None
+    stream_set = set() # type: Set[Tuple[text_type, text_type]]
     for stream_name in stream_list:
         stream_set.add((realm.domain, stream_name))
     bulk_create_streams(realms, stream_set)
@@ -106,6 +112,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, **options):
+        # type: (**Any) -> None
         if options["percent_huddles"] + options["percent_personals"] > 100:
             self.stderr.write("Error!  More than 100% of messages allocated.\n")
             return
@@ -118,7 +125,7 @@ class Command(BaseCommand):
             zulip_realm = Realm.objects.create(domain="zulip.com", name="Zulip Dev")
             if options["test_suite"]:
                 Realm.objects.create(domain="mit.edu")
-            realms = {}
+            realms = {} # type: Dict[text_type, Realm]
             for realm in Realm.objects.all():
                 realms[realm.domain] = realm
 
@@ -135,11 +142,14 @@ class Command(BaseCommand):
             # Create public streams.
             stream_list = ["Verona", "Denmark", "Scotland", "Venice", "Rome"]
             create_streams(realms, zulip_realm, stream_list)
-            recipient_streams = [Stream.objects.get(name=name, realm=zulip_realm).id for name in stream_list]
+            recipient_streams = [Stream.objects.get(name=name, realm=zulip_realm).id for name in stream_list] # type: List[int]
 
-            # Create subscriptions to streams
-            subscriptions_to_add = []
-            profiles = UserProfile.objects.select_related().all()
+            # Create subscriptions to streams.  The following
+            # algorithm will give each of the users a different but
+            # deterministic subset of the streams (given a fixed list
+            # of users).
+            subscriptions_to_add = [] # type: List[Subscription]
+            profiles = UserProfile.objects.select_related().all().order_by("email") # type: Sequence[UserProfile]
             for i, profile in enumerate(profiles):
                 # Subscribe to some streams.
                 for type_id in recipient_streams[:int(len(recipient_streams) *
@@ -154,7 +164,7 @@ class Command(BaseCommand):
                                  Recipient.objects.filter(type=Recipient.STREAM)]
 
         # Extract a list of all users
-        user_profiles = [user_profile.id for user_profile in UserProfile.objects.all()]
+        user_profiles = [user_profile.id for user_profile in UserProfile.objects.all()] # type: List[int]
 
         # Create several initial huddles
         for i in range(options["num_huddles"]):
@@ -165,9 +175,9 @@ class Command(BaseCommand):
                            for i in range(options["num_personals"])]
 
         threads = options["threads"]
-        jobs = []
+        jobs = [] # type: List[Tuple[int, List[List[int]], Dict[str, Any], Callable[[str], int]]]
         for i in range(threads):
-            count = options["num_messages"] / threads
+            count = options["num_messages"] // threads
             if i < options["num_messages"] % threads:
                 count += 1
             jobs.append((count, personals_pairs, options, self.stdout.write))
@@ -199,16 +209,27 @@ class Command(BaseCommand):
             zulip_realm_bots = [
                 ("Zulip New User Bot", "new-user-bot@zulip.com"),
                 ("Zulip Error Bot", "error-bot@zulip.com"),
+                ("Zulip Default Bot", "default-bot@zulip.com"),
                 ]
             zulip_realm_bots.extend(all_realm_bots)
-            create_users(realms, zulip_realm_bots, bot=True)
+            create_users(realms, zulip_realm_bots, bot_type=UserProfile.DEFAULT_BOT)
+
+            zulip_webhook_bots = [
+                ("Zulip Webhook Bot", "webhook-bot@zulip.com"),
+            ]
+            create_users(realms, zulip_webhook_bots, bot_type=UserProfile.INCOMING_WEBHOOK_BOT)
 
             if not options["test_suite"]:
+                # Initialize the email gateway bot as an API Super User
+                email_gateway_bot = UserProfile.objects.get(email__iexact=settings.EMAIL_GATEWAY_BOT)
+                email_gateway_bot.is_api_super_user = True
+                email_gateway_bot.save()
+
                 # To keep the messages.json fixtures file for the test
                 # suite fast, don't add these users and subscriptions
                 # when running populate_db for the test suite
 
-                zulip_stream_list = ["devel", "all", "zulip", "design", "support", "social", "test",
+                zulip_stream_list = ["devel", "all", "announce", "design", "support", "social", "test",
                                       "errors", "sales"]
                 create_streams(realms, zulip_realm, zulip_stream_list)
 
@@ -235,7 +256,7 @@ class Command(BaseCommand):
                     ("Zulip Nagios Bot", "nagios-bot@zulip.com"),
                     ("Zulip Feedback Bot", "feedback@zulip.com"),
                     ]
-                create_users(realms, internal_zulip_users_nosubs, bot=True)
+                create_users(realms, internal_zulip_users_nosubs, bot_type=UserProfile.DEFAULT_BOT)
 
             # Mark all messages as read
             UserMessage.objects.all().update(flags=UserMessage.flags.read)
@@ -244,27 +265,30 @@ class Command(BaseCommand):
         if options["replay_old_messages"]:
             restore_saved_messages()
 
-recipient_hash = {}
+recipient_hash = {} # type: Dict[int, Recipient]
 def get_recipient_by_id(rid):
+    # type: (int) -> Recipient
     if rid in recipient_hash:
         return recipient_hash[rid]
     return Recipient.objects.get(id=rid)
 
 def restore_saved_messages():
-    old_messages = []
-    duplicate_suppression_hash = {}
+    # type: () -> None
+    old_messages = [] # type: List[Dict[str, Any]]
+    duplicate_suppression_hash = {} # type: Dict[str, bool]
 
-    stream_dict = {}
-    user_set = set()
-    email_set = set([u.email for u in UserProfile.objects.all()])
-    realm_set = set()
+    stream_dict = {} # type: Dict[Tuple[text_type, text_type], Tuple[text_type, text_type]]
+    user_set = set() # type: Set[Tuple[text_type, text_type, text_type, bool]]
+    email_set = set([u.email for u in UserProfile.objects.all()]) # type: Set[text_type]
+    realm_set = set() # type: Set[text_type]
     # Initial client_set is nonempty temporarily because we don't have
     # clients in logs at all right now -- later we can start with nothing.
     client_set = set(["populate_db", "website", "zephyr_mirror"])
-    huddle_user_set = set()
+    huddle_user_set = set() # type: Set[Tuple[text_type, ...]]
     # First, determine all the objects our messages will need.
     print(datetime.datetime.now(), "Creating realms/streams/etc...")
     def process_line(line):
+        # type: (str) -> None
         old_message_json = line.strip()
 
         # Due to populate_db's shakespeare mode, we have a lot of
@@ -291,6 +315,7 @@ def restore_saved_messages():
         # Lower case emails and domains; it will screw up
         # deduplication if we don't
         def fix_email(email):
+            # type: (text_type) -> text_type
             return email.strip().lower()
 
         if message_type in ["stream", "huddle", "personal"]:
@@ -320,7 +345,7 @@ def restore_saved_messages():
         old_messages.append(old_message)
 
         if message_type in ["subscription_added", "subscription_removed"]:
-            stream_name = old_message["name"].strip()
+            stream_name = old_message["name"].strip() # type: text_type
             canon_stream_name = stream_name.lower()
             if canon_stream_name not in stream_dict:
                 stream_dict[(old_message["domain"], canon_stream_name)] = \
@@ -369,33 +394,33 @@ def restore_saved_messages():
 
     event_glob = os.path.join(settings.EVENT_LOG_DIR, 'events.*')
     for filename in sorted(glob.glob(event_glob)):
-        with file(filename, "r") as message_log:
+        with open(filename, "r") as message_log:
             for line in message_log.readlines():
                 process_line(line)
 
-    stream_recipients = {}
-    user_recipients = {}
-    huddle_recipients = {}
+    stream_recipients = {} # type: Dict[Tuple[int, text_type], Recipient]
+    user_recipients = {} # type: Dict[text_type, Recipient]
+    huddle_recipients = {} # type: Dict[text_type, Recipient]
 
     # Then, create the objects our messages need.
     print(datetime.datetime.now(), "Creating realms...")
     bulk_create_realms(realm_set)
 
-    realms = {}
+    realms = {} # type: Dict[text_type, Realm]
     for realm in Realm.objects.all():
         realms[realm.domain] = realm
 
     print(datetime.datetime.now(), "Creating clients...")
     bulk_create_clients(client_set)
 
-    clients = {}
+    clients = {} # type: Dict[text_type, Client]
     for client in Client.objects.all():
         clients[client.name] = client
 
     print(datetime.datetime.now(), "Creating streams...")
-    bulk_create_streams(realms, stream_dict.values())
+    bulk_create_streams(realms, list(stream_dict.values()))
 
-    streams = {}
+    streams = {} # type: Dict[int, Stream]
     for stream in Stream.objects.all():
         streams[stream.id] = stream
     for recipient in Recipient.objects.filter(type=Recipient.STREAM):
@@ -405,8 +430,8 @@ def restore_saved_messages():
     print(datetime.datetime.now(), "Creating users...")
     bulk_create_users(realms, user_set)
 
-    users = {}
-    users_by_id = {}
+    users = {} # type: Dict[text_type, UserProfile]
+    users_by_id = {} # type: Dict[int, UserProfile]
     for user_profile in UserProfile.objects.select_related().all():
         users[user_profile.email] = user_profile
         users_by_id[user_profile.id] = user_profile
@@ -416,7 +441,7 @@ def restore_saved_messages():
     print(datetime.datetime.now(), "Creating huddles...")
     bulk_create_huddles(users, huddle_user_set)
 
-    huddles_by_id = {}
+    huddles_by_id = {} # type: Dict[int, Huddle]
     for huddle in Huddle.objects.all():
         huddles_by_id[huddle.id] = huddle
     for recipient in Recipient.objects.filter(type=Recipient.HUDDLE):
@@ -426,7 +451,7 @@ def restore_saved_messages():
     # change and import those as we go to make subscription changes
     # take effect!
     print(datetime.datetime.now(), "Importing subscriptions...")
-    subscribers = {}
+    subscribers = {} # type: Dict[int, Set[int]]
     for s in Subscription.objects.select_related().all():
         if s.active:
             subscribers.setdefault(s.recipient.id, set()).add(s.user_profile.id)
@@ -437,7 +462,7 @@ def restore_saved_messages():
     if Message.objects.exists():
         first_message_id = Message.objects.all().order_by("-id")[0].id + 1
 
-    messages_to_create = []
+    messages_to_create = [] # type: List[Message]
     for idx, old_message in enumerate(old_messages):
         message_type = old_message["type"]
         if message_type not in ["stream", "huddle", "personal"]:
@@ -490,14 +515,14 @@ def restore_saved_messages():
 
     # Finally, create all the UserMessage objects
     print(datetime.datetime.now(), "Importing usermessages, part 1...")
-    personal_recipients = {}
+    personal_recipients = {} # type: Dict[int, bool]
     for r in Recipient.objects.filter(type = Recipient.PERSONAL):
         personal_recipients[r.id] = True
 
-    all_messages = Message.objects.all()
-    user_messages_to_create = []
+    all_messages = Message.objects.all() # type: Sequence[Message]
+    user_messages_to_create = [] # type: List[UserMessage]
 
-    messages_by_id = {}
+    messages_by_id = {} # type: Dict[int, Message]
     for message in all_messages:
         messages_by_id[message.id] = message
 
@@ -509,9 +534,9 @@ def restore_saved_messages():
         first_message_id = min(messages_by_id.keys())
 
     tot_user_messages = 0
-    pending_subs = {}
+    pending_subs = {} # type: Dict[Tuple[int, int], bool]
     current_message_id = first_message_id
-    pending_colors = {}
+    pending_colors = {} # type: Dict[Tuple[text_type, text_type], text_type]
     for old_message in old_messages:
         message_type = old_message["type"]
         if message_type == 'subscription_added':
@@ -570,12 +595,14 @@ def restore_saved_messages():
             user_profile.save(update_fields=["enable_sounds"])
         elif message_type == "enable_offline_email_notifications_changed":
             user_profile = users[old_message["user"]]
-            user_profile.enable_offline_email_notifications = (old_message["enable_offline_email_notifications"] != "false")
+            user_profile.enable_offline_email_notifications = (
+                old_message["enable_offline_email_notifications"] != "false")
             user_profile.save(update_fields=["enable_offline_email_notifications"])
             continue
         elif message_type == "enable_offline_push_notifications_changed":
             user_profile = users[old_message["user"]]
-            user_profile.enable_offline_push_notifications = (old_message["enable_offline_push_notifications"] != "false")
+            user_profile.enable_offline_push_notifications = (
+                old_message["enable_offline_push_notifications"] != "false")
             user_profile.save(update_fields=["enable_offline_push_notifications"])
             continue
         elif message_type == "default_streams":
@@ -611,7 +638,7 @@ def restore_saved_messages():
             # subscriptions being out-of-date.
             continue
 
-        recipient_user_ids = set()
+        recipient_user_ids = set() # type: Set[int]
         for user_profile_id in subscribers[message.recipient_id]:
             recipient_user_ids.add(user_profile_id)
         if message.recipient_id in personal_recipients:
@@ -634,14 +661,14 @@ def restore_saved_messages():
     UserMessage.objects.bulk_create(user_messages_to_create)
 
     print(datetime.datetime.now(), "Finalizing subscriptions...")
-    current_subs = {}
-    current_subs_obj = {}
+    current_subs = {} # type: Dict[Tuple[int, int], bool]
+    current_subs_obj = {} # type: Dict[Tuple[int, int], Subscription]
     for s in Subscription.objects.select_related().all():
         current_subs[(s.recipient_id, s.user_profile_id)] = s.active
         current_subs_obj[(s.recipient_id, s.user_profile_id)] = s
 
-    subscriptions_to_add = []
-    subscriptions_to_change = []
+    subscriptions_to_add = [] # type: List[Subscription]
+    subscriptions_to_change = [] # type: List[Tuple[Tuple[int, int], bool]]
     for pending_sub in pending_subs.keys():
         (recipient_id, user_profile_id) = pending_sub
         current_state = current_subs.get(pending_sub)
@@ -657,11 +684,11 @@ def restore_saved_messages():
                          active=pending_subs[pending_sub])
         subscriptions_to_add.append(s)
     Subscription.objects.bulk_create(subscriptions_to_add)
-    for (sub, active) in subscriptions_to_change:
-        current_subs_obj[sub].active = active
-        current_subs_obj[sub].save(update_fields=["active"])
+    for (sub_tuple, active) in subscriptions_to_change:
+        current_subs_obj[sub_tuple].active = active
+        current_subs_obj[sub_tuple].save(update_fields=["active"])
 
-    subs = {}
+    subs = {} # type: Dict[Tuple[int, int], Subscription]
     for sub in Subscription.objects.all():
         subs[(sub.user_profile_id, sub.recipient_id)] = sub
 
@@ -697,25 +724,26 @@ def restore_saved_messages():
 # - multiple messages per subject
 # - both single and multi-line content
 def send_messages(data):
+    # type: (Tuple[int, Sequence[Sequence[int]], Mapping[str, Any], Callable[[str], Any]]) -> int
     (tot_messages, personals_pairs, options, output) = data
     random.seed(os.getpid())
-    texts = file("zilencer/management/commands/test_messages.txt", "r").readlines()
+    texts = open("zilencer/management/commands/test_messages.txt", "r").readlines()
     offset = random.randint(0, len(texts))
 
     recipient_streams = [klass.id for klass in
-                         Recipient.objects.filter(type=Recipient.STREAM)]
-    recipient_huddles = [h.id for h in Recipient.objects.filter(type=Recipient.HUDDLE)]
+                         Recipient.objects.filter(type=Recipient.STREAM)] # type: List[int]
+    recipient_huddles = [h.id for h in Recipient.objects.filter(type=Recipient.HUDDLE)] # type: List[int]
 
-    huddle_members = {}
+    huddle_members = {} # type: Dict[int, List[int]]
     for h in recipient_huddles:
         huddle_members[h] = [s.user_profile.id for s in
                              Subscription.objects.filter(recipient_id=h)]
 
     num_messages = 0
     random_max = 1000000
-    recipients = {}
+    recipients = {} # type: Dict[int, Tuple[int, int, Dict[str, Any]]]
     while num_messages < tot_messages:
-        saved_data = ''
+        saved_data = {} # type: Dict[str, Any]
         message = Message()
         message.sending_client = get_client('populate_db')
         length = random.randint(1, 5)
@@ -730,10 +758,10 @@ def send_messages(data):
             # Use an old recipient
             message_type, recipient_id, saved_data = recipients[num_messages - 1]
             if message_type == Recipient.PERSONAL:
-                personals_pair = saved_data
+                personals_pair = saved_data['personals_pair']
                 random.shuffle(personals_pair)
             elif message_type == Recipient.STREAM:
-                message.subject = saved_data
+                message.subject = saved_data['subject']
                 message.recipient = get_recipient_by_id(recipient_id)
             elif message_type == Recipient.HUDDLE:
                 message.recipient = get_recipient_by_id(recipient_id)
@@ -755,18 +783,18 @@ def send_messages(data):
             message.recipient = Recipient.objects.get(type=Recipient.PERSONAL,
                                                          type_id=personals_pair[0])
             message.sender = get_user_profile_by_id(personals_pair[1])
-            saved_data = personals_pair
+            saved_data['personals_pair'] = personals_pair
         elif message_type == Recipient.STREAM:
             stream = Stream.objects.get(id=message.recipient.type_id)
             # Pick a random subscriber to the stream
             message.sender = random.choice(Subscription.objects.filter(
                     recipient=message.recipient)).user_profile
-            message.subject = stream.name + str(random.randint(1, 3))
-            saved_data = message.subject
+            message.subject = stream.name + text_type(random.randint(1, 3))
+            saved_data['subject'] = message.subject
 
         message.pub_date = now()
         do_send_message(message)
 
-        recipients[num_messages] = [message_type, message.recipient.id, saved_data]
+        recipients[num_messages] = (message_type, message.recipient.id, saved_data)
         num_messages += 1
     return tot_messages

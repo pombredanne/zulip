@@ -104,14 +104,13 @@ exports.initialize = function () {
                 return;
             }
             if (notifications_api.checkPermission() !== 0) { // 0 is PERMISSION_ALLOWED
-                if(tutorial.is_running()) {
+                if (tutorial.is_running()) {
                     tutorial.defer(function () {
                         notifications_api.requestPermission(function () {
                             asked_permission_already = true;
                         });
                     });
-                }
-                else {
+                } else {
                     notifications_api.requestPermission(function () {
                         asked_permission_already = true;
                     });
@@ -135,7 +134,7 @@ if (window.bridge !== undefined) {
     window.bridge.updateCount(0);
 }
 
-var new_message_count;
+var new_message_count = 0;
 
 exports.update_title_count = function (count) {
     new_message_count = count;
@@ -147,7 +146,9 @@ exports.redraw_title = function () {
     var n;
 
     var new_title = (new_message_count ? ("(" + new_message_count + ") ") : "")
-        + page_params.realm_name + " - " + page_params.product_name;
+        + narrow.narrow_title + " - "
+        + page_params.realm_name + " - "
+        + page_params.product_name;
 
     if (document.title === new_title) {
         return;
@@ -486,7 +487,7 @@ function get_message_header(message) {
     if (message.display_recipient.length > 2) {
         return "group PM with " + message.display_reply_to;
     }
-    if (message.reply_to === page_params.email) {
+    if (util.is_current_user(message.reply_to)) {
         return "PM with yourself";
     }
     return "PM with " + message.display_reply_to;
@@ -494,7 +495,7 @@ function get_message_header(message) {
 
 exports.possibly_notify_new_messages_outside_viewport = function (messages) {
     _.each(messages, function (message) {
-        if (message.sender_email !== page_params.email) {
+        if (!util.is_current_user(message.sender_email)) {
             return;
         }
         // queue up offscreen because of narrowed, or (secondarily) offscreen
@@ -531,7 +532,7 @@ exports.possibly_notify_new_messages_outside_viewport = function (messages) {
 // the current_msg_list (!can_apply_locally; a.k.a. "a search").
 exports.notify_messages_outside_current_search = function (messages) {
     _.each(messages, function (message) {
-        if (message.sender_email !== page_params.email) {
+        if (!util.is_current_user(message.sender_email)) {
             return;
         }
         exports.notify_above_composebox("Sent! Your recent message is outside the current search.",
@@ -580,7 +581,7 @@ exports.register_click_handlers = function () {
     $('#out-of-view-notification').on('click', '.compose_notification_scroll_to_message', function (e) {
         var msgid = $(e.currentTarget).data('msgid');
         current_msg_list.select_id(msgid);
-        scroll_to_selected();
+        navigate.scroll_to_selected();
         e.stopPropagation();
         e.preventDefault();
     });

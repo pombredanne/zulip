@@ -5,12 +5,12 @@
 # configured.
 #
 # On a normal Zulip production server, zproject/local_settings.py is a
-# symlink to /etc/zulip/settings.py (based off local_settings_template.py).
+# symlink to /etc/zulip/settings.py (based off prod_settings_template.py).
 import platform
 import six.moves.configparser
 from base64 import b64decode
 
-config_file = six.moves.configparser.RawConfigParser()
+config_file = six.moves.configparser.RawConfigParser() # type: ignore # https://github.com/python/typeshed/pull/206
 config_file.read("/etc/zulip/zulip.conf")
 
 # Whether we're running in a production environment. Note that PRODUCTION does
@@ -25,9 +25,14 @@ ZULIP_COM_STAGING = PRODUCTION and config_file.get('machine', 'deploy_type') == 
 ZULIP_COM = ((PRODUCTION and config_file.get('machine', 'deploy_type') == 'zulip.com-prod')
              or ZULIP_COM_STAGING)
 if not ZULIP_COM:
-    raise Exception("You should create your own local settings from local_settings_template.")
+    raise Exception("You should create your own local settings from prod_settings_template.")
 
 ZULIP_FRIENDS_LIST_ID = '84b2f3da6b'
+SHARE_THE_LOVE = True
+SHOW_OSS_ANNOUNCEMENT = True
+REGISTER_LINK_DISABLED = True
+CUSTOM_LOGO_URL = "/static/images/logo/zulip-dropbox.png"
+VERBOSE_SUPPORT_OFFERS = True
 
 # This can be filled in automatically from the database, maybe
 DEPLOYMENT_ROLE_NAME = 'zulip.com'
@@ -45,6 +50,7 @@ EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = "Zulip <zulip@zulip.com>"
 # The noreply address to be used as Reply-To for certain generated emails.
 NOREPLY_EMAIL_ADDRESS = "noreply@zulip.com"
+WELCOME_EMAIL_SENDER = {'email': 'wdaher@zulip.com', 'name': 'Waseem Daher'}
 
 SESSION_SERIALIZER = "django.contrib.sessions.serializers.PickleSerializer"
 
@@ -54,10 +60,15 @@ STATSD_HOST = 'stats.zulip.net'
 if ZULIP_COM_STAGING:
     EXTERNAL_HOST = 'staging.zulip.com'
     STATSD_PREFIX = 'staging'
+    STAGING_ERROR_NOTIFICATIONS = True
+    SAVE_FRONTEND_STACKTRACES = True
 else:
     EXTERNAL_HOST = 'zulip.com'
     EXTERNAL_API_PATH = 'api.zulip.com'
     STATSD_PREFIX = 'app'
+
+# Terms of Service
+CUSTOM_TOS = '/etc/zulip/terms.md'
 
 # Legacy zulip.com bucket used for old-style S3 uploads.
 S3_BUCKET="humbug-user-uploads"
@@ -83,13 +94,14 @@ if ZULIP_COM_STAGING:
     EMAIL_GATEWAY_PATTERN = "%s@streams.staging.zulip.com"
 else:
     EMAIL_GATEWAY_PATTERN = "%s@streams.zulip.com"
+EMAIL_GATEWAY_EXTRA_PATTERN_HACK = r'@[\w-]*\.zulip\.net'
 
 # Email mirror configuration
 # The email of the Zulip bot that the email gateway should post as.
 EMAIL_GATEWAY_BOT = "emailgateway@zulip.com"
 
 
-SSO_APPEND_DOMAIN = None
+SSO_APPEND_DOMAIN = None # type: str
 
 AUTHENTICATION_BACKENDS = ('zproject.backends.EmailAuthBackend',
                            'zproject.backends.GoogleMobileOauth2Backend')
@@ -123,3 +135,9 @@ ZULIP_ADMINISTRATOR = 'support@zulip.com'
 ADMINS = (
     ('Zulip Error Reports', 'errors@zulip.com'),
 )
+
+EXTRA_INSTALLED_APPS = [
+    'analytics',
+    'zilencer',
+    'corporate',
+]

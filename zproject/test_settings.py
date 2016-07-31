@@ -11,11 +11,19 @@ DATABASES["default"] = {"NAME": "zulip_test",
                         "TEST_NAME": "django_zulip_tests",
                         "OPTIONS": {"connection_factory": TimeTrackingConnection },}
 
+# In theory this should just go in zproject/settings.py inside the `if
+# PIPELINE_ENABLED` statement, but because zproject/settings.py is processed
+# first, we have to add it here as a hack.
+JS_SPECS['app']['source_filenames'].append('js/bundle.js')
 
 if "TORNADO_SERVER" in os.environ:
+    # This covers the Casper test suite case
     TORNADO_SERVER = os.environ["TORNADO_SERVER"]
 else:
+    # This covers the backend test suite case
     TORNADO_SERVER = None
+    CAMO_URI = 'https://external-content.zulipcdn.net/'
+    CAMO_KEY = 'dummy'
 
 # Decrease the get_updates timeout to 1 second.
 # This allows CasperJS to proceed quickly to the next test step.
@@ -29,6 +37,9 @@ EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
 # The test suite uses EmailAuthBackend
 AUTHENTICATION_BACKENDS += ('zproject.backends.EmailAuthBackend',)
+
+# Makes testing LDAP backend require less mocking
+AUTH_LDAP_ALWAYS_UPDATE_USER = False
 
 TEST_SUITE = True
 RATE_LIMITING = False
@@ -54,5 +65,11 @@ CACHES['database'] = {
 LOGGING['loggers']['zulip.requests']['level'] = 'CRITICAL'
 LOGGING['loggers']['zulip.management']['level'] = 'CRITICAL'
 
-CAMO_URI = 'https://external-content.zulipcdn.net/'
-CAMO_KEY = 'dummy'
+LOCAL_UPLOADS_DIR = 'var/test_uploads'
+
+S3_KEY = 'test-key'
+S3_SECRET_KEY = 'test-secret-key'
+S3_AUTH_UPLOADS_BUCKET = 'test-authed-bucket'
+
+# Test Custom TOS template rendering
+TERMS_OF_SERVICE = 'corporate/terms.md'

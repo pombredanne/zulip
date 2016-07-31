@@ -47,7 +47,7 @@ var fake_messages = [
     },
     {
         id: 3,
-        content: "<p>Looks good to me! <img alt=':+1:' class='emoji' src='static/third/gemoji/images/emoji/+1.png' title=':+1:'></p>",
+        content: "<p>Looks good to me! <img alt=':+1:' class='emoji' src='/static/third/gemoji/images/emoji/+1.png' title=':+1:'></p>",
         is_stream: true,
         sender_full_name: "Jeff Arnold",
         sender_email: "jeff@zulip.com",
@@ -75,7 +75,7 @@ var fake_messages = [
     },
     {
         id: 5,
-        content: "<p>Yay, Twitter integration. <img alt=':heart_eyes:' class='emoji' src='static/third/gemoji/images/emoji/heart_eyes.png' title=':heart_eyes:'></p>",
+        content: "<p>Yay, Twitter integration. <img alt=':heart_eyes:' class='emoji' src='/static/third/gemoji/images/emoji/heart_eyes.png' title=':heart_eyes:'></p>",
         is_stream: true,
         sender_full_name: "Leo Franchi",
         sender_email: "leo@zulip.com",
@@ -117,7 +117,7 @@ var fake_messages = [
     },
     {
         id: 8,
-        content: "<p><img alt=':clock1130:' class='emoji' src='static/third/gemoji/images/emoji/clock1130.png' title=':clock1130:'> Reminder: engineering meeting in 1 hour. <img alt=':clock1130:' class='emoji' src='static/third/gemoji/images/emoji/clock1130.png' title=':clock1130:'></p>",
+        content: "<p><img alt=':clock1130:' class='emoji' src='/static/third/gemoji/images/emoji/clock1130.png' title=':clock1130:'> Reminder: engineering meeting in 1 hour. <img alt=':clock1130:' class='emoji' src='/static/third/gemoji/images/emoji/clock1130.png' title=':clock1130:'></p>",
         is_stream: true,
         sender_full_name: "Reminder Bot",
         sender_email: "reminder-bot@zulip.com",
@@ -173,7 +173,7 @@ var fake_messages = [
     },
     {
         id: 12,
-        content: "<p>No problem, less work for me. <img alt=':smile:' class='emoji' src='static/third/gemoji/images/emoji/smile.png' title=':smile:'></p>",
+        content: "<p>No problem, less work for me. <img alt=':smile:' class='emoji' src='/static/third/gemoji/images/emoji/smile.png' title=':smile:'></p>",
         is_stream: true,
         sender_full_name: "Abbie Patel",
         sender_email: "abbie@zulip.com",
@@ -188,15 +188,16 @@ var fake_messages = [
 ];
 
 function send_delayed_stream_message(stream, topic, content, delay) {
+    var data = {'type': JSON.stringify('stream'),
+                'recipient': JSON.stringify(stream),
+                'topic': JSON.stringify(topic),
+                'content': JSON.stringify(content)};
     setTimeout(function () {
         $.ajax({
             dataType: 'json',
             url: '/json/tutorial_send_message',
             type: 'POST',
-            data: {'type': 'stream',
-                   'recipient': stream,
-                   'topic': topic,
-                   'content': content}
+            data: data
         });
     }, delay * 1000); // delay is in seconds.
 }
@@ -214,26 +215,26 @@ function show_app_alert(contents) {
 function disable_event_handlers() {
     $('body').css({'overflow':'hidden'}); // prevents scrolling the feed
     _.each(["keydown", "keyup", "keypress", "scroll"], function (event_name) {
-        var existing_events = $(document).data("events")[event_name];
+        var existing_events = $._data(document, "events")[event_name];
         if (existing_events === undefined) {
             existing_events = [];
         }
         event_handlers[event_name] = existing_events;
-        $(document).data("events")[event_name] = [];
+        $._data(document, "events")[event_name] = [];
     });
 }
 
 function enable_event_handlers() {
     $('body').css({'overflow':'auto'}); // enables scrolling the feed
     _.each(["keydown", "keyup", "keypress", "scroll"], function (event_name) {
-        $(document).data("events")[event_name] = event_handlers[event_name];
+        $._data(document, "events")[event_name] = event_handlers[event_name];
     });
 }
 
 function set_tutorial_status(status, callback) {
     return channel.post({
         url:      '/json/tutorial_status',
-        data:     {status: status},
+        data:     {status: JSON.stringify(status)},
         success:  callback
     });
 }
@@ -320,16 +321,21 @@ function update_popover_info(popover_func) {
     current_popover_info = popover_func;
 }
 
-function finale() {
+function finale(skip) {
     var finale_modal = $("#tutorial-finale");
-    $(".screen").css({opacity: 0.0});
-    finale_modal.css("z-index", 20001);
-    finale_modal.modal("show");
-
-    $("#tutorial-get-started").click(function () {
+    if (skip) {
         finale_modal.modal("hide");
         $(".screen").css({opacity: 0.0, width: 0, height: 0});
-    }).focus();
+    } else {
+        $(".screen").css({opacity: 0.0});
+        finale_modal.css("z-index", 20001);
+        finale_modal.modal("show");
+
+        $("#tutorial-get-started").click(function () {
+            finale_modal.modal("hide");
+            $(".screen").css({opacity: 0.0, width: 0, height: 0});
+        }).focus();
+    }
 
     // Restore your actual stream colors and rerender to display any
     // messages received during the tutorial.
@@ -351,7 +357,7 @@ function finale() {
     var alert_contents;
 
     if (page_params.prompt_for_invites) {
-        alert_contents = "<i class='icon-vector-heart alert-icon'></i>It's lonely in here! <a href='#invite-user' data-toggle='modal'>Invite some coworkers</a>.";
+        alert_contents = "<i class='icon-vector-heart alert-icon'></i>It's lonely in here! <a href='#invite-user' data-toggle='modal'>Invite some users</a>.";
     } else {
         alert_contents = "<i class='icon-vector-desktop alert-icon'></i>What's better than " + page_params.product_name + " in your browser? The <a href='/apps' target='_blank'>"+ page_params.product_name + " desktop app</a>!";
     }
@@ -387,7 +393,7 @@ function finale() {
         }
 
         if (stream_data.in_home_view("social")) {
-            send_delayed_stream_message("social", "cute animals", "This is a message on stream `social` with the topic `cute animals`. Try uploading or pasting in some pictures. Here's a [guinea pig](https://humbug-user-uploads.s3.amazonaws.com/byqgM1qjol1mzje_KzeNRT5F/guinea.jpg) to get you started:", 75);
+            send_delayed_stream_message("social", "cute animals", "This is a message on stream `social` with the topic `cute animals`. Try uploading or pasting in some pictures. Here's a [guinea pig](/static/images/cute/guinea.jpg) to get you started:", 75);
         }
     }
 }
@@ -429,7 +435,7 @@ function reply() {
 
     $("#tutorial-reply-next").click(function () {
         spotlight_message.popover("destroy");
-        finale();
+        finale(false);
     }).focus();
 }
 
@@ -497,7 +503,7 @@ function welcome() {
     var spotlight_message = rows.first_visible();
     var bar = rows.get_message_recipient_header(spotlight_message);
     box_first_message();
-    create_and_show_popover(bar, maybe_tweak_placement("left"), "Welcome",
+    create_and_show_popover(bar, maybe_tweak_placement("left"), "Welcome to " + page_params.product_name,
                             "tutorial_message");
 
     var my_popover = $("#tutorial-message").closest(".popover");
@@ -508,6 +514,10 @@ function welcome() {
         bar.popover("destroy");
         stream();
     }).focus();
+    $("#tutorial-message-skip").click(function () {
+        bar.popover("destroy");
+        finale(true);
+    });
 }
 
 exports.start = function () {

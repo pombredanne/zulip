@@ -10,16 +10,13 @@ add_dependencies({
 
 
 set_global('document', null);
-set_global('$', function () {
-    return {
-        on: function () {},
-        trigger: function () {}
-    };
-});
+
+global.stub_out_jquery();
 
 set_global('feature_flags', {});
+set_global('Filter', function () {});
 
-var MessageList = require('js/message_list');
+var MessageList = require('js/message_list').MessageList;
 
 (function test_basics() {
     var table;
@@ -60,7 +57,7 @@ var MessageList = require('js/message_list');
     assert.equal(list.closest_id(60), 60);
     assert.equal(list.closest_id(61), 60);
 
-    assert.deepEqual(list.all(), messages);
+    assert.deepEqual(list.all_messages(), messages);
 
     global.$.Event = function (ev) {
         assert.equal(ev, 'message_selected.zulip');
@@ -95,13 +92,13 @@ var MessageList = require('js/message_list');
     list.view.clear_table = function () {};
 
     list.remove_and_rerender([{id: 60}]);
-    var removed = list.all().filter(function (msg) {
+    var removed = list.all_messages().filter(function (msg) {
         return msg.id !== 60;
     });
-    assert.deepEqual(list.all(), removed);
+    assert.deepEqual(list.all_messages(), removed);
 
     list.clear();
-    assert.deepEqual(list.all(), []);
+    assert.deepEqual(list.all_messages(), []);
 
 }());
 

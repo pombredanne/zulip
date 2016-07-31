@@ -1,9 +1,10 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 #
 # Generates % delta activity metrics from graphite/statsd data
 #
 from __future__ import print_function
 from __future__ import absolute_import
+from __future__ import division
 import os, sys
 from six.moves import range
 
@@ -57,7 +58,7 @@ def noon_of(day=datetime.now()):
 def points_during_day(data, noon):
     """Returns all the points in the dataset that occur in the 12 hours around
     the datetime object that is passed in. data must be sorted."""
-    before =datetime_to_timestamp(noon - timedelta(hours=12))
+    before = datetime_to_timestamp(noon - timedelta(hours=12))
     after = datetime_to_timestamp(noon + timedelta(hours=12))
 
     between = [pt for pt in data if pt[1] > before and pt[1] < after]

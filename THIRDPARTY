@@ -63,16 +63,16 @@ Copyright: 2006 Otheus Shelling
 License: GPL-2.0
 Comment: Not linked.
 
-Files: puppet/zulip_internal/files/nagios_plugins/check_debian_packages
+Files: puppet/zulip/files/nagios_plugins/zulip_base/check_debian_packages
 Copyright: 2005 Francesc Guasch
 License: GPL-2.0
 Comment: Not linked.
 
-Files: puppet/zulip_internal/files/nagios_plugins/check_postgres.pl
+Files: puppet/zulip/files/nagios_plugins/zulip_postgres_appdb/check_postgres.pl
 Copyright: 2007-2015 Greg Sabino Mullane
 License: BSD-2-Clause
 
-Files: puppet/zulip_internal/files/nagios_plugins/check_website_response.sh
+Files: puppet/zulip/files/nagios_plugins/zulip_nagios_server/check_website_response.sh
 Copyright: 2011 Chris Freeman
 License: GPL-2.0
 
@@ -122,7 +122,7 @@ Copyright: 2013 Nijiko Yonskai
 License: Apache-2.0
 Comment: The software has been modified.
 
-Files: static/third/gemoji/images/emoji/unicode/* tools/emoji_dump/*.ttf
+Files: static/third/gemoji/images/emoji/unicode/* tools/setup/emoji_dump/*.ttf
 Copyright: Google, Inc.
 License: Apache-2.0
 Comment: These are actually Noto Emoji, not gemoji.
@@ -142,7 +142,7 @@ Copyright: 2013 Jack Moore
 License: Expat
 
 Files: static/third/jquery-caret/*
-Copyright: 2010 C.F., Wong
+Copyright: 2012, 2013 Andrew C. Dvorak
 License: Expat
 
 Files: static/third/jquery-filedrop/jquery.filedrop.js
@@ -182,6 +182,10 @@ Files: static/third/marked/*
 Copyright: 2011-2013, Christopher Jeffrey
 License: Expat
 
+Files: static/third/string-prototype-codepointat/*
+Copyright: 2014 Mathias Bynens
+License: Expat
+
 Files: static/third/sockjs/sockjs-0.3.4.js
 Copyright: 2011-2012 VMware, Inc.
  2012 Douglas Crockford
@@ -204,7 +208,7 @@ Copyright: 2011-2013 Felix Gnass
 License: Expat
 
 Files: static/third/underscore/underscore.js
-Copyright: 2009-2013 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+Copyright: 2009-2015 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
 License: Expat
 Comment: https://github.com/jashkenas/underscore/blob/master/LICENSE
 
@@ -229,10 +233,6 @@ Files: tools/jslint/jslint.js
 Copyright: 2002 Douglas Crockford
 License: XXX-good-not-evil
 
-Files: tools/python-proxy
-Copyright: 2009 F.bio Domingues
-License: Expat
-
 Files: tools/review
 Copyright: 2010 Ksplice, Inc.
 License: Apache-2.0
@@ -245,6 +245,10 @@ Comment: https://pypi.python.org/pypi/Markdown
 Files: zerver/lib/ccache.py
 Copyright: 2013 David Benjamin and Alan Huang
 License: Expat
+
+Files: zerver/lib/decorator.py zerver/management/commands/runtornado.py scripts/setup/generate_secrets.py
+Copyright: Django Software Foundation and individual contributors
+License: BSD-3-Clause
 
 Files: frontend_tests/casperjs/*
 Copyright: 2011-2012 Nicolas Perriault

@@ -4,9 +4,11 @@ var exports = {};
 
 var zoomed_to_topics = false;
 var zoomed_stream = '';
+var private_messages_open = false;
 var last_private_message_count = 0;
 var last_mention_count = 0;
 var previous_sort_order;
+var previous_unpinned_order;
 
 function active_stream_name() {
     if (narrow.active()) {
@@ -18,40 +20,92 @@ function active_stream_name() {
     return false;
 }
 
+function filter_streams_by_search(streams) {
+    var search_box = $(".stream-list-filter");
+
+    var search_term = search_box.expectOne().val().trim();
+
+    if (search_term === '') {
+        return streams;
+    }
+
+    var search_terms = search_term.toLowerCase().split(",");
+    search_terms = _.map(search_terms, function (s) {
+        return s.trim();
+    });
+
+    var filtered_streams = _.filter(streams, function (stream) {
+        return _.any(search_terms, function (search_term) {
+            var lower_stream_name = stream.toLowerCase().split(" ");
+            return _.any(lower_stream_name, function (name) {
+                return name.indexOf(search_term) === 0;
+            });
+        });
+    });
+
+    return filtered_streams;
+}
+
 exports.build_stream_list = function () {
     var streams = stream_data.subscribed_streams();
     if (streams.length === 0) {
         return;
     }
 
-    var sort_recent = (streams.length > 40);
+    streams = filter_streams_by_search(streams);
 
-    streams.sort(function (a, b) {
+    var sort_recent = (streams.length > 40);
+    var pinned_streams = [];
+    var unpinned_streams = [];
+    var parent = $('#stream_filters');
+    var elems = [];
+
+    function add_sidebar_li(stream) {
+        var li = $(stream_data.get_sub(stream).sidebar_li);
         if (sort_recent) {
-            if (recent_subjects.has(b) && ! recent_subjects.has(a)) {
+            if (! stream_data.recent_subjects.has(stream)) {
+                li.addClass('inactive_stream');
+            } else {
+                li.removeClass('inactive_stream');
+            }
+        }
+        elems.push(li.get(0));
+    }
+
+    _.each(streams, function (stream) {
+        var pinned = stream_data.get_sub(stream).pin_to_top;
+        if (pinned) {
+            pinned_streams.push(stream);
+        } else {
+            unpinned_streams.push(stream);
+        }
+    });
+
+    unpinned_streams.sort(function (a, b) {
+        if (sort_recent) {
+            if (stream_data.recent_subjects.has(b) && ! stream_data.recent_subjects.has(a)) {
                 return 1;
-            } else if (! recent_subjects.has(b) && recent_subjects.has(a)) {
+            } else if (! stream_data.recent_subjects.has(b) && stream_data.recent_subjects.has(a)) {
                 return -1;
             }
         }
         return util.strcmp(a, b);
     });
 
-    if (previous_sort_order !== undefined
-        && util.array_compare(previous_sort_order, streams)) {
+    streams = pinned_streams.concat(unpinned_streams);
+
+    if (previous_sort_order !== undefined && util.array_compare(previous_sort_order, streams)
+                                          && util.array_compare(previous_unpinned_order, unpinned_streams)) {
         return;
     }
-
     previous_sort_order = streams;
-
-    var parent = $('#stream_filters');
+    previous_unpinned_order = unpinned_streams;
     parent.empty();
 
-    var elems = [];
-    _.each(streams, function (stream) {
+    _.each(pinned_streams, function (stream) {
         var li = $(stream_data.get_sub(stream).sidebar_li);
         if (sort_recent) {
-            if (! recent_subjects.has(stream)) {
+            if (! stream_data.recent_subjects.has(stream)) {
                 li.addClass('inactive_stream');
             } else {
                 li.removeClass('inactive_stream');
@@ -59,6 +113,15 @@ exports.build_stream_list = function () {
         }
         elems.push(li.get(0));
     });
+
+    if (pinned_streams.length > 0) {
+        _.each(pinned_streams, add_sidebar_li);
+        elems.push($('<hr class="pinned-stream-split">').get(0));
+    }
+    if (unpinned_streams.length > 0) {
+        _.each(unpinned_streams, add_sidebar_li);
+    }
+
     $(elems).appendTo(parent);
 };
 
@@ -89,9 +152,16 @@ function get_filter_li(type, name) {
 function zoom_in() {
     popovers.hide_all();
     zoomed_to_topics = true;
-    $("#streams_list").expectOne().removeClass("zoom-out");
-    $("#streams_list").expectOne().addClass("zoom-in");
+    $("#streams_list").expectOne().removeClass("zoom-out").addClass("zoom-in");
     zoomed_stream = active_stream_name();
+
+    // Hide stream list titles and pinned stream splitter
+    $(".stream-filters-label").each(function () {
+        $(this).hide();
+    });
+    $(".pinned-stream-split").each(function () {
+        $(this).hide();
+    });
 
     $("#stream_filters li.narrow-filter").each(function () {
         var elt = $(this);
@@ -107,14 +177,49 @@ function zoom_in() {
 function zoom_out() {
     popovers.hide_all();
     zoomed_to_topics = false;
-    $("#streams_list").expectOne().removeClass("zoom-in");
-    $("#streams_list").expectOne().addClass("zoom-out");
+    // Show stream list titles and pinned stream splitter
+    $(".stream-filters-label").each(function () {
+        $(this).show();
+    });
+    $(".pinned-stream-split").each(function () {
+        $(this).show();
+    });
+
+    $("#streams_list").expectOne().removeClass("zoom-in").addClass("zoom-out");
     $("#stream_filters li.narrow-filter").show();
+}
+
+function remove_expanded_subjects() {
+    popovers.hide_topic_sidebar_popover();
+    $("ul.expanded_subjects").remove();
+}
+
+function remove_expanded_private_messages() {
+    popovers.hide_topic_sidebar_popover();
+    $("ul.expanded_private_messages").remove();
+    resize.resize_stream_filters_container();
+}
+
+function reset_to_unnarrowed(narrowed_within_same_stream) {
+    if (zoomed_to_topics && narrowed_within_same_stream !== true) {
+        zoom_out();
+    }
+
+    private_messages_open = false;
+    $("ul.filters li").removeClass('active-filter active-sub-filter');
+    remove_expanded_subjects();
+    remove_expanded_private_messages();
 }
 
 function get_subject_filter_li(stream, subject) {
     var stream_li = get_filter_li('stream', stream);
     return iterate_to_find(".expanded_subjects li.expanded_subject", subject, stream_li);
+}
+
+function get_private_message_filter_li(conversation) {
+    var pm_li = get_filter_li('global', 'private');
+    return iterate_to_find(".expanded_private_messages li.expanded_private_message",
+        conversation, pm_li);
 }
 
 exports.set_in_home_view = function (stream, in_home) {
@@ -133,7 +238,8 @@ function build_stream_sidebar_row(name) {
                 uri: narrow.by_stream_uri(name),
                 not_in_home_view: (stream_data.in_home_view(name) === false),
                 invite_only: sub.invite_only,
-                color: stream_data.get_color(name)
+                color: stream_data.get_color(name),
+                pin_to_top: sub.pin_to_top
                };
     args.dark_background = stream_color.get_color_class(args.color);
     var list_item = $(templates.render('stream_sidebar_row', args));
@@ -164,8 +270,7 @@ exports.redraw_stream_privacy = function (stream_name) {
 
     if (sub.invite_only) {
         swatch.addClass("private-stream-swatch");
-    }
-    else {
+    } else {
         swatch.removeClass("private-stream-swatch");
     }
 
@@ -186,11 +291,9 @@ function update_count_in_dom(count_span, value_span, count) {
         count_span.hide();
         if (count_span.parent().hasClass("subscription_block")) {
             count_span.parent(".subscription_block").removeClass("stream-with-count");
-        }
-        else if (count_span.parent().hasClass("user_sidebar_entry")) {
+        } else if (count_span.parent().hasClass("user_sidebar_entry")) {
             count_span.parent(".user_sidebar_entry").removeClass("user-with-count");
-        }
-        else if (count_span.parent().hasClass("group-pms-sidebar-entry")) {
+        } else if (count_span.parent().hasClass("group-pms-sidebar-entry")) {
             count_span.parent(".group-pms-sidebar-entry").removeClass("group-with-count");
         }
         value_span.text('');
@@ -201,11 +304,9 @@ function update_count_in_dom(count_span, value_span, count) {
 
     if (count_span.parent().hasClass("subscription_block")) {
         count_span.parent(".subscription_block").addClass("stream-with-count");
-    }
-    else if (count_span.parent().hasClass("user_sidebar_entry")) {
+    } else if (count_span.parent().hasClass("user_sidebar_entry")) {
         count_span.parent(".user_sidebar_entry").addClass("user-with-count");
-    }
-    else if (count_span.parent().hasClass("group-pms-sidebar-entry")) {
+    } else if (count_span.parent().hasClass("group-pms-sidebar-entry")) {
             count_span.parent(".group-pms-sidebar-entry").addClass("group-with-count");
     }
     value_span.text(count);
@@ -245,17 +346,26 @@ exports.set_subject_count = function (stream, subject, count) {
     update_count_in_dom(count_span, value_span, count);
 };
 
+
+exports.set_pm_conversation_count = function (conversation, count) {
+    var pm_li = get_private_message_filter_li(conversation);
+    var count_span = pm_li.find('.private_message_count');
+    var value_span = count_span.find('.value');
+
+    if (count_span.length === 0 || value_span.length === 0) {
+        return;
+    }
+
+    count_span.removeClass("zero_count");
+    update_count_in_dom(count_span, value_span, count);
+};
+
 exports.remove_narrow_filter = function (name, type) {
     get_filter_li(type, name).remove();
 };
 
-function remove_expanded_subjects() {
-    popovers.hide_topic_sidebar_popover();
-    $("ul.expanded_subjects").remove();
-}
-
 exports._build_subject_list = function (stream, active_topic, max_subjects) {
-    var subjects = recent_subjects.get(stream) || [];
+    var subjects = stream_data.recent_subjects.get(stream) || [];
 
     if (active_topic) {
         active_topic = active_topic.toLowerCase();
@@ -294,6 +404,42 @@ exports._build_subject_list = function (stream, active_topic, max_subjects) {
     return topic_dom;
 };
 
+exports._build_private_messages_list = function (active_conversation, max_private_messages) {
+
+    var private_messages = message_store.recent_private_messages || [];
+    var display_messages = [];
+    var hiding_messages = false;
+
+    _.each(private_messages, function (private_message_obj, idx) {
+        var recipients_string = private_message_obj.display_reply_to;
+        var replies_to = private_message_obj.reply_to;
+        var num_unread = unread.num_unread_for_person(private_message_obj.reply_to);
+
+        // Show the most recent subjects, as well as any with unread messages
+        var always_visible = (idx < max_private_messages) || (num_unread > 0)
+            || (replies_to === active_conversation);
+
+        if (!always_visible) {
+            hiding_messages = true;
+        }
+
+        var display_message = {
+            recipients: recipients_string,
+            reply_to: replies_to,
+            unread: num_unread,
+            is_zero: num_unread === 0,
+            zoom_out_hide: !always_visible,
+            url: narrow.pm_with_uri(private_message_obj.reply_to)
+        };
+        display_messages.push(display_message);
+    });
+
+    var recipients_dom = templates.render('sidebar_private_message_list',
+                                  {messages: display_messages,
+                                   want_show_more_messages_links: hiding_messages});
+    return recipients_dom;
+};
+
 function rebuild_recent_subjects(stream, active_topic) {
     // TODO: Call rebuild_recent_subjects less, not on every new
     // message.
@@ -305,8 +451,25 @@ function rebuild_recent_subjects(stream, active_topic) {
     stream_li.append(topic_dom);
 
     if (active_topic) {
-        get_subject_filter_li(stream, active_topic).addClass('active-subject-filter');
+        get_subject_filter_li(stream, active_topic).addClass('active-sub-filter');
     }
+}
+
+function rebuild_recent_private_messages(active_conversation) {
+    remove_expanded_private_messages();
+    if (private_messages_open)
+    {
+        var max_private_messages = 5;
+        var private_li = get_filter_li('global', 'private');
+        var private_messages_dom = exports._build_private_messages_list(active_conversation,
+            max_private_messages);
+        private_li.append(private_messages_dom);
+    }
+    if (active_conversation) {
+        get_private_message_filter_li(active_conversation).addClass('active-sub-filter');
+    }
+
+    resize.resize_stream_filters_container();
 }
 
 exports.update_streams_sidebar = function () {
@@ -326,6 +489,25 @@ exports.update_streams_sidebar = function () {
         if (stream_data.is_subscribed(op_stream[0])) {
             rebuild_recent_subjects(op_stream[0], subject);
         }
+    }
+};
+
+exports.update_private_messages = function () {
+    exports._build_private_messages_list();
+
+    if (! narrow.active()) {
+        return;
+    }
+
+    var is_pm_filter = _.contains(narrow.filter().operands('is'), "private");
+    var conversation = narrow.filter().operands('pm-with');
+    if (conversation.length === 1) {
+        rebuild_recent_private_messages(conversation[0]);
+    } else if (conversation.length !== 0) {
+        // TODO: This should be the reply-to of the thread.
+        rebuild_recent_private_messages("");
+    } else if (is_pm_filter) {
+        rebuild_recent_private_messages("");
     }
 };
 
@@ -378,9 +560,9 @@ exports.update_dom_with_unread_counts = function (counts) {
         });
     });
 
-
     counts.pm_count.each(function (count, person) {
         exports.set_presence_list_count(person, count);
+        exports.set_pm_conversation_count(person, count);
     });
 
     // integer counts
@@ -400,14 +582,17 @@ exports.rename_stream = function (sub) {
     exports.build_stream_list(); // big hammer
 };
 
+exports.refresh_stream_in_sidebar = function (sub) {
+    // used by subs.pin_or_unpin_stream,
+    // since pinning/unpinning requires reordering of streams in the sidebar
+    sub.sidebar_li = build_stream_sidebar_row(sub.name);
+    exports.build_stream_list();
+    exports.update_streams_sidebar();
+};
+
 $(function () {
     $(document).on('narrow_activated.zulip', function (event) {
-        if (zoomed_to_topics && (active_stream_name() !== zoomed_stream)) {
-            zoom_out();
-        }
-
-        $("ul.filters li").removeClass('active-filter active-subject-filter');
-        remove_expanded_subjects();
+        reset_to_unnarrowed(active_stream_name() === zoomed_stream);
 
         // TODO: handle confused filters like "in:all stream:foo"
         var op_in = event.filter.operands('in');
@@ -418,10 +603,26 @@ $(function () {
         }
         var op_is = event.filter.operands('is');
         if (op_is.length !== 0) {
-            if (['private', 'starred', 'mentioned'].indexOf(op_is[0]) !== -1) {
+            if (['starred', 'mentioned'].indexOf(op_is[0]) !== -1) {
                 $("#global_filters li[data-name='" + op_is[0] + "']").addClass('active-filter');
             }
         }
+
+        var op_pm = event.filter.operands('pm-with');
+        if ((op_is.length !== 0 && _.contains(op_is, "private")) || op_pm.length !== 0) {
+            private_messages_open = true;
+            if (op_pm.length === 1) {
+                $("#user_presences li[data-email='" + op_pm[0] + "']").addClass('active-filter');
+                rebuild_recent_private_messages(op_pm[0]);
+            } else if (op_pm.length !== 0) {
+                // TODO: Should pass the reply-to of the thread
+                rebuild_recent_private_messages("");
+            } else {
+                $("#global_filters li[data-name='private']").addClass('active-filter zoom-out');
+                rebuild_recent_private_messages("");
+            }
+        }
+
         var op_stream = event.filter.operands('stream');
         if (op_stream.length !== 0 && stream_data.is_subscribed(op_stream[0])) {
             var stream_li = get_filter_li('stream', op_stream[0]);
@@ -435,18 +636,10 @@ $(function () {
             rebuild_recent_subjects(op_stream[0], subject);
             unread.process_visible();
         }
-        var op_pm = event.filter.operands('pm-with');
-        if (op_pm.length === 1) {
-            $("#user_presences li[data-email='" + op_pm[0] + "']").addClass('active-filter');
-        }
     });
 
     $(document).on('narrow_deactivated.zulip', function (event) {
-        if (zoomed_to_topics) {
-            zoom_out();
-        }
-        $("ul.filters li").removeClass('active-filter active-subject-filter');
-        remove_expanded_subjects();
+        reset_to_unnarrowed();
         $("#global_filters li[data-name='home']").addClass('active-filter');
     });
 
@@ -474,6 +667,7 @@ $(function () {
         exports.remove_narrow_filter(stream_name, 'stream');
         // We need to make sure we resort if the removed sub gets added again
         previous_sort_order = undefined;
+        previous_unpinned_order = undefined;
     });
 
     $('.show-all-streams').on('click', function (e) {
@@ -486,6 +680,17 @@ $(function () {
         var stream = $(e.target).parents('.show-more-topics').attr('data-name');
 
         zoom_in();
+
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    $('#global_filters').on('click', '.show-more-private-messages', function (e) {
+        popovers.hide_all();
+        $(".expanded_private_messages").expectOne().removeClass("zoom-out").addClass("zoom-in");
+        $(".expanded_private_messages li.expanded_private_message").each(function () {
+            $(this).show();
+        });
 
         e.preventDefault();
         e.stopPropagation();
@@ -524,6 +729,89 @@ $(function () {
         e.preventDefault();
     });
 
+});
+
+function actually_update_streams_for_search() {
+    exports.update_streams_sidebar();
+    resize.resize_page_components();
+}
+
+var update_streams_for_search = _.throttle(actually_update_streams_for_search, 50);
+
+exports.searching = function () {
+    return $('.stream-list-filter').expectOne().is(':focus');
+};
+
+exports.escape_search = function () {
+    var filter = $('.stream-list-filter').expectOne();
+    if (filter.val() === '') {
+        exports.clear_and_hide_search();
+        return;
+    }
+    filter.val('');
+    update_streams_for_search();
+};
+
+exports.initiate_search = function () {
+    var filter = $('.stream-list-filter').expectOne();
+    filter.removeClass('notdisplayed');
+    filter.focus();
+};
+
+exports.clear_and_hide_search = function () {
+    var filter = $('.stream-list-filter');
+    if (filter.val() !== '') {
+        filter.val('');
+        update_streams_for_search();
+    }
+    filter.blur();
+    filter.addClass('notdisplayed');
+};
+
+function focus_stream_filter (e) {
+    e.stopPropagation();
+}
+
+function maybe_select_stream (e) {
+    if (e.keyCode === 13) {
+        // Enter key was pressed
+
+        var topStream = $('#stream_filters li.narrow-filter').first().data('name');
+        if (topStream !== undefined) {
+            // undefined if there are no results
+            if (ui.home_tab_obscured()) {
+                ui.change_tab_to('#home');
+            }
+            exports.clear_and_hide_search();
+            narrow.by('stream', topStream, {select_first_unread: true, trigger: 'sidebar enter key'});
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    }
+}
+
+function toggle_filter_displayed(e) {
+    if (e.target.id === 'streams_inline_cog') {
+        return;
+    }
+    if (0 === $('.stream-list-filter.notdisplayed').length) {
+        exports.clear_and_hide_search();
+    } else {
+        exports.initiate_search();
+    }
+    e.preventDefault();
+}
+
+$(function () {
+    $(".stream-list-filter").expectOne()
+        .on('click', focus_stream_filter)
+        .on('input', update_streams_for_search)
+        .on('keydown', maybe_select_stream);
+});
+
+$(function () {
+    $("#streams_header").expectOne()
+        .on('click', toggle_filter_displayed);
 });
 
 return exports;

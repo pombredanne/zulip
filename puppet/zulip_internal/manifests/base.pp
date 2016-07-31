@@ -5,7 +5,6 @@ class zulip_internal::base {
                         "openssh-server",
                         "mosh",
                         # Monitoring
-                        "nagios-plugins-basic",
                         "munin-node",
                         "munin-plugins-extra" ,
                         # Security
@@ -14,6 +13,18 @@ class zulip_internal::base {
                         "debian-goodies",
                         # For our EC2 network setup script
                         "python-netifaces",
+                        # Popular editors
+                        "vim",
+                        "emacs23-nox",
+                        "puppet-el",
+                        # Prevent accidental reboots
+                        "molly-guard",
+                        # Useful tools in a production environment
+                        "screen",
+                        "strace",
+                        "moreutils",
+                        "host",
+                        "git",
                          ]
   package { $org_base_packages: ensure => "installed" }
 
@@ -122,16 +133,6 @@ class zulip_internal::base {
     force => true,
     recurse => true,
   }
-  file { "/usr/lib/nagios/plugins/":
-    require => Package[nagios-plugins-basic],
-    recurse => true,
-    purge => false,
-    owner => "root",
-    group => "root",
-    mode => 755,
-    source => "puppet:///modules/zulip_internal/nagios_plugins/",
-  }
-
   file { '/etc/iptables/rules.v4':
     ensure     => file,
     mode       => 600,

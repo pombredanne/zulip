@@ -60,7 +60,7 @@ exports.highlight_query_in_phrase = function (query, phrase) {
 };
 
 exports.render_person = function (person) {
-    if (person.special_item_text){
+    if (person.special_item_text) {
         return person.special_item_text;
     }
     return person.full_name + " <" + person.email + ">";
@@ -78,8 +78,7 @@ function prefix_sort(query, objs, get_item) {
         var item;
         if (get_item) {
             item = get_item(obj);
-        }
-        else {
+        } else {
             item = obj;
         }
         if (item.indexOf(query) === 0) {
@@ -143,7 +142,7 @@ exports.sort_recipients = function (matches, query) {
 };
 
 exports.sort_emojis = function (matches, query) {
-    //TODO: sort by category in v2
+    // TODO: sort by category in v2
     var results = prefix_sort(query, matches, function (x) { return x.emoji_name; });
     return results.matches.concat(results.rest);
 };

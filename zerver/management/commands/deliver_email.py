@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
 """
 Deliver email messages that have been queued by various things
@@ -61,7 +61,8 @@ def send_email_job(job):
     return msg.send() > 0
 
 class Command(BaseCommand):
-    help = """Deliver emails queued by various parts of Zulip (either for immediate sending or sending at a specified time).
+    help = """Deliver emails queued by various parts of Zulip
+(either for immediate sending or sending at a specified time).
 
 Run this command under supervisor. We use Mandrill for zulip.com; this is for SMTP email delivery.
 
@@ -73,7 +74,8 @@ Usage: python manage.py deliver_email
         # be careful not to run this on multiple systems.
         with lockfile("/tmp/zulip_email_deliver.lockfile"):
             while True:
-                # make sure to use utcnow, otherwise it gets confused when you set the time with utcnow(), and select with now()
+                # make sure to use utcnow, otherwise it gets confused when you set the time with utcnow(),
+                # and select with now()
                 email_jobs_to_deliver = ScheduledJob.objects.filter(type=ScheduledJob.EMAIL,
                                                                 scheduled_timestamp__lte=datetime.utcnow())
                 if email_jobs_to_deliver:

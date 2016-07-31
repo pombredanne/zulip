@@ -12,7 +12,7 @@ function is_image_format(file) {
         'image/jpeg',
         'image/png',
         'image/gif',
-        'image/svg+xml'
+        'image/tiff'
     ];
     return _.indexOf(supported_types, type) >= 0;
 }
@@ -107,16 +107,14 @@ exports.build_widget = function (
                 input_error.text('File size must be < 5Mb.');
                 input_error.show();
                 clear();
-            }
-            else if (!is_image_format(file)) {
+            } else if (!is_image_format(file)) {
                 input_error.text('File type is not supported.');
                 input_error.show();
                 clear();
             } else {
                 accept(file);
             }
-        }
-        else {
+        } else {
             input_error.text('Please just upload one file.');
         }
     });
@@ -194,16 +192,14 @@ exports.build_direct_upload_widget = function (
                 input_error.text('File size must be < 5Mb.');
                 input_error.show();
                 clear();
-            }
-            else if (!is_image_format(file)) {
+            } else if (!is_image_format(file)) {
                 input_error.text('File type is not supported.');
                 input_error.show();
                 clear();
             } else {
                 accept(file);
             }
-        }
-        else {
+        } else {
             input_error.text('Please just upload one file.');
         }
     });

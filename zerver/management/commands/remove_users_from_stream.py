@@ -1,6 +1,9 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+from typing import Any
+
+from argparse import ArgumentParser
 from optparse import make_option
 
 from django.core.management.base import BaseCommand
@@ -33,9 +36,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, **options):
+        # type: (*Any, **Any) -> None
         if options["domain"] is None or options["stream"] is None or \
                 (options["users"] is None and options["all_users"] is None):
-            self.print_help("python2.7 manage.py", "remove_users_from_stream")
+            self.print_help("python manage.py", "remove_users_from_stream")
             exit(1)
 
         realm = get_realm(options["domain"])

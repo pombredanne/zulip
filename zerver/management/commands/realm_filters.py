@@ -1,5 +1,9 @@
 from __future__ import absolute_import
 from __future__ import print_function
+
+from typing import Any
+
+from argparse import ArgumentParser
 from optparse import make_option
 
 from django.core.management.base import BaseCommand
@@ -16,12 +20,13 @@ NOTE: Regexes must be simple enough that they can be easily translated to JavaSc
       * Named groups will be converted to numbered groups automatically
       * Inline-regex flags will be stripped, and where possible translated to RegExp-wide flags
 
-Example: python2.7 manage.py realm_filters --realm=zulip.com --op=add '#(?P<id>[0-9]{2,8})' 'https://trac.humbughq.com/ticket/%(id)s'
-Example: python2.7 manage.py realm_filters --realm=zulip.com --op=remove '#(?P<id>[0-9]{2,8})'
-Example: python2.7 manage.py realm_filters --realm=zulip.com --op=show
+Example: python manage.py realm_filters --realm=zulip.com --op=add '#(?P<id>[0-9]{2,8})' 'https://trac.humbughq.com/ticket/%(id)s'
+Example: python manage.py realm_filters --realm=zulip.com --op=remove '#(?P<id>[0-9]{2,8})'
+Example: python manage.py realm_filters --realm=zulip.com --op=show
 """
 
     def add_arguments(self, parser):
+        # type: (ArgumentParser) -> None
         parser.add_argument('-r', '--realm',
                             dest='domain',
                             type=str,
@@ -38,20 +43,21 @@ Example: python2.7 manage.py realm_filters --realm=zulip.com --op=show
                             help="format string to substitute")
 
     def handle(self, *args, **options):
+        # type: (*Any, **str) -> None
         realm = get_realm(options["domain"])
         if options["op"] == "show":
-            print("%s: %s" % (realm.domain, all_realm_filters().get(realm.domain, "")))
+            print("%s: %s" % (realm.domain, all_realm_filters().get(realm.domain, [])))
             sys.exit(0)
 
         pattern = options['pattern']
         if not pattern:
-            self.print_help("python2.7 manage.py", "realm_filters")
+            self.print_help("python manage.py", "realm_filters")
             sys.exit(1)
 
         if options["op"] == "add":
             url_format_string = options['url_format_string']
             if not url_format_string:
-                self.print_help("python2.7 manage.py", "realm_filters")
+                self.print_help("python manage.py", "realm_filters")
                 sys.exit(1)
             do_add_realm_filter(realm, pattern, url_format_string)
             sys.exit(0)
@@ -59,5 +65,5 @@ Example: python2.7 manage.py realm_filters --realm=zulip.com --op=show
             do_remove_realm_filter(realm, pattern)
             sys.exit(0)
         else:
-            self.print_help("python2.7 manage.py", "realm_filters")
+            self.print_help("python manage.py", "realm_filters")
             sys.exit(1)

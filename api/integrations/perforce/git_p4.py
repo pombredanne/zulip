@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 #
 # git-p4.py -- A tool for bidirectional operation between a Perforce depot and git.
 #
@@ -9,6 +9,7 @@
 #
 from __future__ import print_function
 from __future__ import absolute_import
+from __future__ import division
 import sys
 import six
 from six.moves import input
@@ -32,7 +33,7 @@ import stat
 try:
     from subprocess import CalledProcessError
 except ImportError:
-    # from python2.7:subprocess.py
+    # from python:subprocess.py
     # Exception classes used by this module.
     class CalledProcessError(Exception):
         """This exception is raised when a process run by check_call() returns
@@ -2346,7 +2347,7 @@ class P4Sync(Command, P4UserMap):
             self.labels[newestChange] = [output, revisions]
 
         if self.verbose:
-            print("Label changes: %s" % self.labels.keys())
+            print("Label changes: %s" % (list(self.labels.keys()),))
 
     # Import p4 labels as git tags. A direct mapping does not
     # exist, so assume that if all the files are at the same revision
@@ -2779,7 +2780,7 @@ class P4Sync(Command, P4UserMap):
                 if short in branches:
                     self.p4BranchesInGit = [ short ]
             else:
-                self.p4BranchesInGit = branches.keys()
+                self.p4BranchesInGit = list(branches.keys())
 
             if len(self.p4BranchesInGit) > 1:
                 if not self.silent:
@@ -2921,7 +2922,7 @@ class P4Sync(Command, P4UserMap):
                     b = b[len(self.projectName):]
                 self.createdBranches.add(b)
 
-        self.tz = "%+03d%02d" % (- time.timezone / 3600, ((- time.timezone % 3600) / 60))
+        self.tz = "%+03d%02d" % (- time.timezone / 3600, ((- time.timezone % 3600) // 60))
 
         self.importProcess = subprocess.Popen(["git", "fast-import"],
                                               stdin=subprocess.PIPE,
@@ -3214,7 +3215,7 @@ commands = {
 
 def main():
     if len(sys.argv[1:]) == 0:
-        printUsage(commands.keys())
+        printUsage(list(commands.keys()))
         sys.exit(2)
 
     cmdName = sys.argv[1]
@@ -3224,7 +3225,7 @@ def main():
     except KeyError:
         print("unknown command %s" % cmdName)
         print("")
-        printUsage(commands.keys())
+        printUsage(list(commands.keys()))
         sys.exit(2)
 
     options = cmd.options

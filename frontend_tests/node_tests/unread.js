@@ -8,7 +8,8 @@
 // dependencies (except _).
 
 add_dependencies({
-    muting: 'js/muting.js'
+    muting: 'js/muting.js',
+    unread: 'js/unread.js'
 });
 
 var stream_data = require('js/stream_data.js');
@@ -45,7 +46,7 @@ var zero_counts = {
     narrow.active = function () {
         return true;
     };
-    current_msg_list.all = function () {
+    current_msg_list.all_messages = function () {
         return [];
     };
 
@@ -57,7 +58,7 @@ var zero_counts = {
     narrow.active = function () {
         return false;
     };
-    current_msg_list.all = function () {
+    current_msg_list.all_messages = function () {
         return [];
     };
 
@@ -362,7 +363,7 @@ var zero_counts = {
     var message = {
         id: 15
     };
-    current_msg_list.all = function () {
+    current_msg_list.all_messages = function () {
         return [message];
     };
 

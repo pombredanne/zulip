@@ -1,5 +1,8 @@
 from __future__ import absolute_import
 
+import os
+import shutil
+
 from django.conf import settings
 from django.contrib.staticfiles.storage import CachedFilesMixin, StaticFilesStorage
 from pipeline.storage import PipelineMixin
@@ -7,7 +10,7 @@ from pipeline.storage import PipelineMixin
 class AddHeaderMixin(object):
     def post_process(self, paths, dry_run=False, **kwargs):
         if dry_run:
-            return
+            return []
 
         with open(settings.STATIC_HEADER_FILE) as header_file:
             header = header_file.read().decode(settings.FILE_CHARSET)
@@ -35,7 +38,7 @@ class AddHeaderMixin(object):
 
             ret_dict[path] = (path, path, True)
 
-        super_class = super(AddHeaderMixin, self)
+        super_class = super(AddHeaderMixin, self) # type: ignore # https://github.com/JukkaL/mypy/issues/857
         if hasattr(super_class, 'post_process'):
             super_ret = super_class.post_process(paths, dry_run, **kwargs)
         else:
@@ -47,9 +50,31 @@ class AddHeaderMixin(object):
             if processed:
                 ret_dict[old_path] = val
 
-        return ret_dict.itervalues()
+        return list(ret_dict.values())
 
 
-class ZulipStorage(PipelineMixin, AddHeaderMixin, CachedFilesMixin,
-        StaticFilesStorage):
+class RemoveUnminifiedFilesMixin(object):
+    def post_process(self, paths, dry_run=False, **kwargs):
+        if dry_run:
+            return []
+
+        root = settings.STATIC_ROOT
+        to_remove = ['templates', 'styles', 'js']
+
+        for tree in to_remove:
+            shutil.rmtree(os.path.join(root, tree))
+
+        is_valid = lambda p: all([not p.startswith(k) for k in to_remove])
+
+        paths = {k: v for k, v in paths.items() if is_valid(k)}
+        super_class = super(RemoveUnminifiedFilesMixin, self)  # type: ignore # https://github.com/JukkaL/mypy/issues/857
+        if hasattr(super_class, 'post_process'):
+            return super_class.post_process(paths, dry_run, **kwargs)
+
+        return []
+
+
+class ZulipStorage(PipelineMixin,
+        AddHeaderMixin, RemoveUnminifiedFilesMixin,
+        CachedFilesMixin, StaticFilesStorage):
     pass

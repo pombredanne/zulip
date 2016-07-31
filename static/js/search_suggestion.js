@@ -122,8 +122,7 @@ function get_private_suggestions(all_people, operators, person_operator_matches)
         if (query === undefined) {
             return [];
         }
-    }
-    else {
+    } else {
         return [];
     }
 
@@ -255,7 +254,7 @@ function get_topic_suggestions(query_operators) {
         return [];
     }
 
-    var topics = recent_subjects.get(stream);
+    var topics = stream_data.recent_subjects.get(stream);
 
     stream = stream_data.get_name(stream);
 
@@ -263,7 +262,7 @@ function get_topic_suggestions(query_operators) {
         return [];
     }
 
-    // Be defensive here in case recent_subjects gets super huge, but
+    // Be defensive here in case stream_data.recent_subjects gets super huge, but
     // still slice off enough topics to find matches.
     topics = topics.slice(0, 300);
 

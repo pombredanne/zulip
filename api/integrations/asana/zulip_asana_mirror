@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # Asana integration for Zulip
@@ -30,6 +30,7 @@
 #
 # python-dateutil is a dependency for this script.
 
+from __future__ import print_function
 import base64
 from datetime import datetime, timedelta
 
@@ -37,16 +38,16 @@ import json
 import logging
 import os
 import time
-import urllib2
+from six.moves import urllib
 
 import sys
 
 try:
     import dateutil.parser
     import dateutil.tz
-except ImportError, e:
-    print >>sys.stderr, e
-    print >>sys.stderr, "Please install the python-dateutil package."
+except ImportError as e:
+    print(e, file=sys.stderr)
+    print("Please install the python-dateutil package.", file=sys.stderr)
     exit(1)
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -74,8 +75,8 @@ def fetch_from_asana(path):
     headers = {"Authorization": "Basic %s" % auth}
 
     url = "https://app.asana.com/api/1.0" + path
-    request = urllib2.Request(url, None, headers)
-    result = urllib2.urlopen(request)
+    request = urllib.request.Request(url, None, headers)
+    result = urllib.request.urlopen(request)
 
     return json.load(result)
 
@@ -189,7 +190,7 @@ def since():
                 timestamp = float(datestring)
                 max_timestamp_processed = datetime.fromtimestamp(timestamp)
                 logging.info("Reading from resume file: " + datestring)
-        except (ValueError,IOError) as e:
+        except (ValueError, IOError) as e:
             logging.warn("Could not open resume file: %s" % (
                     e.message or e.strerror,))
             max_timestamp_processed = default_since()

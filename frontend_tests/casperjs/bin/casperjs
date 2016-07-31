@@ -1,5 +1,6 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
+from __future__ import print_function
 import json
 import os
 import subprocess
@@ -7,7 +8,7 @@ import sys
 
 def test_cmd(cmd):
     try:
-        return subprocess.check_output([__file__] + cmd.split(' '))
+        return subprocess.check_output([__file__] + cmd.split(' '), universal_newlines=True)
     except subprocess.CalledProcessError as err:
         sys.stderr.write('FAIL: %s\n' % ' '.join(err.cmd))
         sys.stderr.write('      %s\n' % err.output)

@@ -2,10 +2,13 @@ add_dependencies({
     util: 'js/util.js'
 });
 
+global.stub_out_jquery();
+
 var people = require("js/people.js");
 
 set_global('page_params', {
-    people_list: []
+    people_list: [],
+    email: 'hamlet@example.com'
 });
 set_global('activity', {
     set_user_statuses: function () {}

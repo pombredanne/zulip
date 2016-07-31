@@ -175,6 +175,13 @@ exports.resize_bottom_whitespace = function (h) {
     }
 };
 
+exports.resize_stream_filters_container = function (h) {
+    h = narrow_window ? left_userlist_get_new_heights() : get_new_heights();
+    exports.resize_bottom_whitespace(h);
+    $("#stream-filters-container").css('max-height', h.stream_filters_max_height);
+    $('#stream-filters-container').perfectScrollbar('update');
+};
+
 exports.resize_page_components = function () {
     var composebox = $("#compose");
     var floating_recipient_bar = $("#floating_recipient_bar");
@@ -205,8 +212,7 @@ exports.resize_page_components = function () {
             $("#group-pms").css("margin", "0px");
             $("#userlist-toggle").css("display", "none");
             $("#invite-user-link").hide();
-        }
-        else if (!css_narrow_mode && narrow_window) {
+        } else if (!css_narrow_mode && narrow_window) {
             // move stuff to the right sidebar (wide mode)
             narrow_window = false;
             popovers.set_userlist_placement("right");
@@ -247,7 +253,7 @@ exports.handler = function (e) {
     // but before we've loaded in the messages; in that case, don't
     // try to scroll to one.
     if (current_msg_list.selected_id() !== -1) {
-        scroll_to_selected();
+        navigate.scroll_to_selected();
     }
 };
 
